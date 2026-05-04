@@ -1332,6 +1332,11 @@ function parseWorklogFile(file, company) {
             currentItem = cleanWorklogName(col1raw, WORKLOG_RAW_MAP);
           } else {
             currentItem = cleanWorklogName(col1raw, WORKLOG_PROC_MAP);
+            if(currentItem === '돼지갈비') {
+              const unit = String(row[2]||'').replace(/\s/g,'');
+              if(unit.includes('팩') || unit.toLowerCase().includes('pack'))
+                currentItem = '돼지갈비(동그랑땡)';
+            }
           }
         }
         if(!currentItem || !ROW_TYPES.includes(col3)) continue;
