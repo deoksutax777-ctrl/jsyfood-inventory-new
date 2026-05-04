@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JSY Food 재고수불부 자동생성기</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+:root { --main: #00338D; --gold: #C5A44E; --bg: #f5f6fa; --card: #fff; --border: #dde1e8; --text: #222; --sub: #666; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Malgun Gothic','Segoe UI',sans-serif; background:var(--bg); color:var(--text); font-size:13px; }
+.header { background:var(--main); color:#fff; padding:14px 24px; display:flex; align-items:center; gap:16px; }
+.header h1 { font-size:18px; font-weight:700; }
+.header .sub { color:var(--gold); font-size:12px; }
+.tabs { display:flex; background:#fff; border-bottom:2px solid var(--main); padding:0 16px; }
+.tab { padding:10px 20px; cursor:pointer; font-weight:600; color:var(--sub); border-bottom:3px solid transparent; transition:.2s; }
+.tab:hover { color:var(--main); }
+.tab.active { color:var(--main); border-bottom-color:var(--gold); }
+.panel { display:none; padding:20px; max-width:1400px; margin:0 auto; }
+.panel.active { display:block; }
+.card { background:var(--card); border:1px solid var(--border); border-radius:6px; padding:16px; margin-bottom:16px; }
+.card h3 { font-size:14px; color:var(--main); margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:6px; }
+.btn { padding:8px 18px; border:none; border-radius:4px; cursor:pointer; font-size:13px; font-weight:600; transition:.2s; }
+.btn-primary { background:var(--main); color:#fff; }
+.btn-primary:hover { background:#002266; }
+.btn-gold { background:var(--gold); color:#fff; }
+.btn-gold:hover { background:#b09540; }
+.btn-sm { padding:5px 12px; font-size:12px; }
+.btn-outline { background:transparent; border:1px solid var(--main); color:var(--main); }
+.toolbar { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+select, input[type=file] { padding:6px 10px; border:1px solid var(--border); border-radius:4px; font-size:13px; }
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th { background:var(--main); color:#fff; padding:6px 8px; text-align:center; font-weight:600; white-space:nowrap; }
+td { padding:5px 6px; border:1px solid var(--border); text-align:right; }
+td.label { text-align:left; font-weight:600; background:#f8f9fb; white-space:nowrap; }
+td input { width:100%; border:1px solid #ddd; padding:3px 5px; text-align:right; font-size:12px; border-radius:2px; }
+td input:focus { outline:none; border-color:var(--gold); }
+tr.section-header td { background:var(--main); color:#fff; font-weight:700; text-align:center; }
+tr.subtotal td { background:#eef2f9; font-weight:700; }
+.num { font-variant-numeric:tabular-nums; }
+.neg { color:#c00; }
+.result-table { overflow-x:auto; }
+.msg { padding:12px; border-radius:4px; margin-bottom:12px; }
+.msg-info { background:#e8f0fe; color:var(--main); }
+.msg-warn { background:#fff3cd; color:#856404; }
+.msg-ok { background:#d4edda; color:#155724; }
+.grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+@media(max-width:900px) { .grid-2 { grid-template-columns:1fr; } }
+.help { font-size:11px; color:var(--sub); margin-top:4px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>JSY Food 재고수불부 자동생성기</h1>
+  <span class="sub">원육 · 가공육 · 소스 | 총평균법 + BOM 비례배분</span>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="settings">설정</div>
+  <div class="tab" data-tab="rawmeat">원육</div>
+  <div class="tab" data-tab="processed">가공육</div>
+  <div class="tab" data-tab="sauce">소스</div>
+</div>
+
+<!-- ===================== 설정 탭 ===================== -->
+<div class="panel active" id="panel-settings">
+  <div class="card">
+    <h3>작업 기간</h3>
+    <div class="toolbar">
+      <label>시작년월: <select id="startMonth"></select></label>
+      <label>종료년월: <select id="endMonth"></select></label>
+    </div>
+    <p class="help">26년 기준: 2601(1월)~2612(12월). 기초재고는 시작월 직전 기말 데이터입니다.</p>
+  </div>
+
+  <div class="card">
+    <h3>기초재고 입력 (시작월 직전 기말)</h3>
+    <div class="toolbar">
+      <button class="btn btn-outline btn-sm" onclick="importInitialInventory()">25년 수불부에서 불러오기</button>
+      <input type="file" id="fileInitInv" accept=".xlsx,.xls" style="display:none">
+      <button class="btn btn-outline btn-sm" onclick="clearInitialInventory()">초기화</button>
+    </div>
+    <div class="grid-2">
+      <div>
+        <h4 style="font-size:13px;margin:8px 0">원육 기초재고</h4>
+        <div id="initRawTable"></div>
+      </div>
+      <div>
+        <h4 style="font-size:13px;margin:8px 0">가공육 기초재고</h4>
+        <div id="initProcTable"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 원육 탭 ===================== -->
+<div class="panel" id="panel-rawmeat">
+  <div class="card">
+    <h3>데이터 입력</h3>
+    <div class="toolbar">
+      <label>매입자료: <input type="file" id="filePurchase" accept=".xlsx,.xls"></label>
+      <label>작업일지(참프레시): <input type="file" id="fileWL_CP" accept=".xlsx,.xls"></label>
+      <label>작업일지(영미트): <input type="file" id="fileWL_YM" accept=".xlsx,.xls"></label>
+      <label>작업일지(인천): <input type="file" id="fileWL_IC" accept=".xlsx,.xls"></label>
+    </div>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="parseRawMeatInputs()">파일 파싱</button>
+      <button class="btn btn-outline btn-sm" onclick="showManualRawInput()">수동 입력 모드</button>
+    </div>
+    <div id="rawParseStatus"></div>
+  </div>
+
+  <div class="card" id="rawManualInput" style="display:none">
+    <h3>월별 수동 입력</h3>
+    <div class="toolbar">
+      <label>월 선택: <select id="rawManualMonth"></select></label>
+    </div>
+    <div id="rawManualTables"></div>
+  </div>
+
+  <div class="card">
+    <h3>계산 및 결과</h3>
+    <div class="toolbar">
+      <button class="btn btn-gold" onclick="calculateRawMeat()">원육 수불부 계산</button>
+      <button class="btn btn-primary" onclick="exportRawMeatExcel()">엑셀 다운로드</button>
+      <label>월 보기: <select id="rawResultMonth" onchange="renderRawResult()"></select></label>
+    </div>
+    <div id="rawResult" class="result-table"></div>
+  </div>
+</div>
+
+<!-- ===================== 가공육 탭 ===================== -->
+<div class="panel" id="panel-processed">
+  <div class="card">
+    <h3>가공육 수불부</h3>
+    <div class="toolbar">
+      <button class="btn btn-gold" onclick="calculateProcessed()">가공육 계산 (원육 결과 필요)</button>
+      <button class="btn btn-primary" onclick="exportProcessedExcel()">엑셀 다운로드</button>
+      <label>월 보기: <select id="procResultMonth" onchange="renderProcResult()"></select></label>
+    </div>
+    <div id="procResult" class="result-table"></div>
+  </div>
+</div>
+
+<!-- ===================== 소스 탭 ===================== -->
+<div class="panel" id="panel-sauce">
+  <div class="card">
+    <h3>소스 수불부</h3>
+    <div class="toolbar">
+      <button class="btn btn-gold" onclick="calculateSauce()">소스 계산</button>
+      <button class="btn btn-primary" onclick="exportSauceExcel()">엑셀 다운로드</button>
+      <label>월 보기: <select id="sauceResultMonth" onchange="renderSauceResult()"></select></label>
+    </div>
+    <div id="sauceResult" class="result-table"></div>
+  </div>
+</div>
+
+<script>
+// ================================================================
+//  상수 정의
+// ================================================================
+const COMPANIES_RAW = ['참프레시','영미트','인천공장','스마일푸드'];
+const COMPANIES_PROC = ['참프레시','영미트','인천공장','스마일푸드'];
+
+const RAW_ITEMS = ['갈비','살치살','진갈비살','척아이롤','안창살','우설','막내장','깐양','부채살','돈목살','돼지뼈','홍두깨','돈갈비'];
+
+const PROC_ITEMS = [
+  '수원왕갈비(15cm)','수원왕갈비(8cm)','서울왕갈비(8cm,양념)','생갈비','생갈비(15cm)',
+  '양념LA갈비','돼지갈비','돼지갈비(동그랑땡)','마늘갈비',
+  '양념갈비[선물]','소불고기[선물]','LA갈비[선물]','양념구이[선물]',
+  '청기와양념구이','홍두깨','안창살','우설','깐양','육회'
+];
+
+// 가공육 BOM (25년 12월 최종 기준)
+// { 가공육품목: [ {원육, 사용비율, 표준무게}, ... ] }
+const PROC_BOM = {
+  '수원왕갈비(8cm)': [{raw:'갈비',ratio:0.85,wt:0.22},{raw:'진갈비살',ratio:1,wt:0.10}],
+  '수원왕갈비(15cm)': [{raw:'갈비',ratio:1,wt:0.40}],
+  '서울왕갈비(8cm,양념)': [{raw:'갈비',ratio:0.15,wt:0.09},{raw:'살치살',ratio:1,wt:0.09}],
+  '생갈비': [{raw:'갈비',ratio:0.85,wt:0.22},{raw:'진갈비살',ratio:1,wt:0.10}],
+  '생갈비(15cm)': [{raw:'갈비',ratio:1,wt:0.40}],
+  '양념LA갈비': [{raw:'갈비',ratio:0.15,wt:0.405},{raw:'살치살',ratio:1,wt:0.585}],
+  '마늘갈비': [{raw:'갈비',ratio:1,wt:1.00}],
+  '청기와양념구이': [{raw:'갈비',ratio:1,wt:0.05},{raw:'부채살',ratio:1,wt:0.08}],
+  '돼지갈비': [{raw:'돈목살',ratio:1,wt:0.13},{raw:'돼지뼈',ratio:1,wt:0.09}],
+  '돼지갈비(동그랑땡)': [{raw:'돈목살',ratio:1,wt:1.80},{raw:'돼지뼈',ratio:1,wt:0.60}],
+  '안창살': [{raw:'안창살',ratio:1,wt:1.00}],
+  '우설': [{raw:'우설',ratio:1,wt:1.00}],
+  '깐양': [{raw:'막내장',ratio:0.5,wt:0.50},{raw:'깐양',ratio:0.5,wt:0.50}],
+  '육회': [{raw:'홍두깨',ratio:1,wt:1.00}],
+  '홍두깨': [{raw:'홍두깨',ratio:1,wt:1.00}],
+  '양념갈비[선물]': [{raw:'갈비',ratio:0.15,wt:0.09},{raw:'살치살',ratio:1,wt:0.09},{raw:'갈비',ratio:0.85,wt:0.18}],
+  'LA갈비[선물]': [{raw:'갈비',ratio:1,wt:0.22}],
+  '소불고기[선물]': [{raw:'척아이롤',ratio:1,wt:0.25}],
+  '양념구이[선물]': [{raw:'갈비',ratio:1,wt:0.15},{raw:'부채살',ratio:1,wt:0.24}],
+};
+
+// 소스 원재료/제품
+const SAUCE_RAW = ['정종','황설탕','양조간장(701S)','후추','갈아만든배','아침에사과','진간장','카라멜','포도당','프로찜에스','미원'];
+const SAUCE_PRODUCTS = ['돼지갈비양념','마늘갈비양념'];
+
+const SAUCE_BOM = {
+  '돼지갈비양념': [
+    {mat:'정종',wt:0},{mat:'황설탕',wt:0.124},{mat:'양조간장(701S)',wt:0},
+    {mat:'후추',wt:0.062},{mat:'갈아만든배',wt:0.372},{mat:'아침에사과',wt:0.867},
+    {mat:'진간장',wt:0.191},{mat:'카라멜',wt:0.019},{mat:'포도당',wt:1.239},
+    {mat:'프로찜에스',wt:0.085},{mat:'미원',wt:0.002}
+  ],
+  '마늘갈비양념': [
+    {mat:'정종',wt:0.302},{mat:'황설탕',wt:0.216},{mat:'양조간장(701S)',wt:0.216},
+    {mat:'후추',wt:0},{mat:'갈아만든배',wt:0},{mat:'아침에사과',wt:0},
+    {mat:'진간장',wt:0},{mat:'카라멜',wt:0},{mat:'포도당',wt:0},
+    {mat:'프로찜에스',wt:0},{mat:'미원',wt:0}
+  ]
+};
+
+// ================================================================
+//  전역 상태
+// ================================================================
+let STATE = {
+  startMonth: '2601', endMonth: '2612',
+  // 기초재고: { company: { item: {qty, price, amount} } }
+  initRaw: {},   // 원육
+  initProc: {},  // 가공육
+  initSauceRaw: {},  // 소스 원재료
+  initSauceProd: {}, // 소스 제품
+  // 파싱된 입력 데이터
+  purchase: {},  // { month: { item: {qty, amount} } }
+  worklog: {},   // { company: { month: { item: {incoming, outgoing} } } }
+  procWorklog: {}, // { company: { month: { item: {production, outgoing, outByDest} } } }
+  // 계산 결과
+  rawResult: {},  // { month: { section: { item: {beg,inc,out,end} } } }
+  procResult: {},
+  sauceResult: {},
+};
+
+// ================================================================
+//  유틸리티
+// ================================================================
+function fmt(n) {
+  if(n==null||isNaN(n)) return '';
+  return Math.round(n).toLocaleString('ko-KR');
+}
+function fmtDec(n, d=2) {
+  if(n==null||isNaN(n)) return '';
+  return n.toLocaleString('ko-KR',{minimumFractionDigits:d,maximumFractionDigits:d});
+}
+function safe(v) { return (v && !isNaN(v)) ? Number(v) : 0; }
+
+function getMonths() {
+  const s = parseInt(STATE.startMonth), e = parseInt(STATE.endMonth);
+  const months = [];
+  for(let m=s; m<=e; m++) {
+    const mm = m % 100;
+    if(mm >= 1 && mm <= 12) months.push(String(m));
+  }
+  return months;
+}
+
+function monthLabel(code) {
+  const y = code.substring(0,2), m = parseInt(code.substring(2));
+  return `${y}년 ${m}월`;
+}
+
+function prevMonth(code) {
+  let y = parseInt(code.substring(0,2)), m = parseInt(code.substring(2));
+  m--; if(m<1){m=12;y--;}
+  return String(y).padStart(2,'0')+String(m).padStart(2,'0');
+}
+
+// ================================================================
+//  탭 전환
+// ================================================================
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('panel-'+t.dataset.tab).classList.add('active');
+  });
+});
+
+// ================================================================
+//  설정 탭 초기화
+// ================================================================
+function initSettings() {
+  const selS = document.getElementById('startMonth');
+  const selE = document.getElementById('endMonth');
+  for(let y=25;y<=27;y++) for(let m=1;m<=12;m++) {
+    const v = String(y).padStart(2,'0')+String(m).padStart(2,'0');
+    const label = `${y}년 ${m}월`;
+    selS.add(new Option(label,v));
+    selE.add(new Option(label,v));
+  }
+  selS.value = '2601'; selE.value = '2612';
+  selS.onchange = () => { STATE.startMonth=selS.value; refreshMonthSelects(); };
+  selE.onchange = () => { STATE.endMonth=selE.value; refreshMonthSelects(); };
+  renderInitialTables();
+  refreshMonthSelects();
+}
+
+function refreshMonthSelects() {
+  const months = getMonths();
+  ['rawManualMonth','rawResultMonth','procResultMonth','sauceResultMonth'].forEach(id => {
+    const sel = document.getElementById(id);
+    if(!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = '';
+    months.forEach(m => sel.add(new Option(monthLabel(m),m)));
+    if(months.includes(cur)) sel.value = cur;
+  });
+}
+
+function renderInitialTables() {
+  const rawDiv = document.getElementById('initRawTable');
+  let html = '<table><tr><th>품목</th><th>업체</th><th>수량</th><th>단가</th><th>금액</th></tr>';
+  COMPANIES_RAW.forEach(co => {
+    if(!STATE.initRaw[co]) STATE.initRaw[co] = {};
+    RAW_ITEMS.forEach((item,i) => {
+      if(!STATE.initRaw[co][item]) STATE.initRaw[co][item] = {qty:0,price:0,amount:0};
+      const d = STATE.initRaw[co][item];
+      html += `<tr>
+        <td class="label">${i===0?'':''}<small>${item}</small></td>
+        <td class="label"><small>${i===0?co:''}</small></td>
+        <td><input type="number" step="any" value="${d.qty||''}" onchange="updInitRaw('${co}','${item}','qty',this.value)"></td>
+        <td><input type="number" step="any" value="${d.price||''}" onchange="updInitRaw('${co}','${item}','price',this.value)"></td>
+        <td><input type="number" step="any" value="${d.amount||''}" onchange="updInitRaw('${co}','${item}','amount',this.value)"></td>
+      </tr>`;
+    });
+    html += `<tr style="border-top:2px solid var(--main)"><td colspan="5"></td></tr>`;
+  });
+  html += '</table>';
+  rawDiv.innerHTML = html;
+}
+
+function updInitRaw(co,item,field,val) {
+  STATE.initRaw[co][item][field] = safe(val);
+}
+
+// ================================================================
+//  총평균법 계산 핵심 함수
+// ================================================================
+function weightedAvg(begQty, begAmt, incQty, incAmt) {
+  const totalQty = begQty + incQty;
+  const totalAmt = begAmt + incAmt;
+  if(totalQty === 0) return { avgPrice:0, totalQty:0, totalAmt:0 };
+  return { avgPrice: totalAmt / totalQty, totalQty, totalAmt };
+}
+
+function calcInventoryItem(beg, incQty, incPrice, incAmt, outQty) {
+  // 입고금액: 직접 지정되면 사용, 아니면 수량×단가
+  const iAmt = incAmt != null ? incAmt : (incQty * incPrice);
+  const iPrice = incQty > 0 ? iAmt / incQty : 0;
+
+  const avg = weightedAvg(beg.qty, beg.amount, incQty, iAmt);
+  const outAmt = outQty * avg.avgPrice;
+  const endQty = beg.qty + incQty - outQty;
+  const endAmt = avg.totalAmt - outAmt;
+  const endPrice = endQty > 0 ? endAmt / endQty : 0;
+
+  return {
+    beg: { qty: beg.qty, price: beg.price || (beg.qty>0 ? beg.amount/beg.qty : 0), amount: beg.amount },
+    inc: { qty: incQty, price: iPrice, amount: iAmt },
+    out: { qty: outQty, price: avg.avgPrice, amount: outAmt },
+    end: { qty: endQty, price: endPrice, amount: endAmt },
+    avgPrice: avg.avgPrice
+  };
+}
+
+// ================================================================
+//  원육 수불부 계산 엔진
+// ================================================================
+function calculateRawMeat() {
+  const months = getMonths();
+  STATE.rawResult = {};
+
+  months.forEach((month, mi) => {
+    const result = {};
+    const pm = mi === 0 ? null : months[mi-1];
+
+    // 컨테이너: 입고 = 매입합계, 기초/기말 = 0
+    result['컨테이너'] = {};
+    RAW_ITEMS.forEach(item => {
+      const purch = (STATE.purchase[month]||{})[item] || {qty:0, amount:0};
+      const price = purch.qty > 0 ? purch.amount / purch.qty : 0;
+      result['컨테이너'][item] = {
+        beg:{qty:0,price:0,amount:0},
+        inc:{qty:purch.qty, price:price, amount:purch.amount},
+        out:{qty:purch.qty, price:price, amount:purch.amount},
+        end:{qty:0,price:0,amount:0},
+        avgPrice: price
+      };
+    });
+
+    // 각 업체
+    COMPANIES_RAW.forEach(co => {
+      result[co] = {};
+      RAW_ITEMS.forEach(item => {
+        // 기초: 전월 기말 or 설정값
+        let beg;
+        if(pm && STATE.rawResult[pm] && STATE.rawResult[pm][co]) {
+          const prev = STATE.rawResult[pm][co][item];
+          beg = prev ? {...prev.end} : {qty:0,price:0,amount:0};
+        } else {
+          beg = STATE.initRaw[co] && STATE.initRaw[co][item]
+            ? {...STATE.initRaw[co][item]} : {qty:0,price:0,amount:0};
+        }
+
+        // 입고: 작업일지 입고수량 × 컨테이너 입고단가
+        const wl = ((STATE.worklog[co]||{})[month]||{})[item] || {incoming:0, outgoing:0};
+        const contPrice = result['컨테이너'][item].inc.price;
+        const incQty = wl.incoming;
+        const incAmt = incQty * contPrice;
+
+        // 출고: 작업일지 출고수량
+        const outQty = wl.outgoing;
+
+        result[co][item] = calcInventoryItem(beg, incQty, contPrice, incAmt, outQty);
+      });
+    });
+
+    // 전사 합산
+    result['전사'] = {};
+    RAW_ITEMS.forEach(item => {
+      let bQ=0,bA=0,iQ=0,iA=0,oQ=0,oA=0;
+      COMPANIES_RAW.forEach(co => {
+        const d = result[co][item];
+        bQ+=d.beg.qty; bA+=d.beg.amount;
+        iQ+=d.inc.qty; iA+=d.inc.amount;
+        oQ+=d.out.qty; oA+=d.out.amount;
+      });
+      const eQ = bQ+iQ-oQ;
+      const eA = (bA+iA)-oA;
+      result['전사'][item] = {
+        beg:{qty:bQ, price:bQ>0?bA/bQ:0, amount:bA},
+        inc:{qty:iQ, price:iQ>0?iA/iQ:0, amount:iA},
+        out:{qty:oQ, price:oQ>0?oA/oQ:0, amount:oA},
+        end:{qty:eQ, price:eQ>0?eA/eQ:0, amount:eA},
+        avgPrice:(bQ+iQ)>0?(bA+iA)/(bQ+iQ):0
+      };
+    });
+
+    STATE.rawResult[month] = result;
+  });
+
+  document.getElementById('rawParseStatus').innerHTML = '<div class="msg msg-ok">원육 수불부 계산 완료!</div>';
+  renderRawResult();
+}
+
+// ================================================================
+//  가공육 수불부 계산 엔진
+// ================================================================
+function calculateProcessed() {
+  if(!Object.keys(STATE.rawResult).length) {
+    alert('원육 수불부를 먼저 계산해주세요.');
+    return;
+  }
+  const months = getMonths();
+  STATE.procResult = {};
+
+  months.forEach((month, mi) => {
+    const result = {};
+    const pm = mi === 0 ? null : months[mi-1];
+    const rawMonth = STATE.rawResult[month];
+    if(!rawMonth) return;
+
+    COMPANIES_PROC.forEach(co => {
+      result[co] = {};
+      const rawCo = rawMonth[co];
+      if(!rawCo) { PROC_ITEMS.forEach(item => { result[co][item] = emptyRow(); }); return; }
+
+      // Step 1: 각 원육별 출고금액 수집
+      const rawOutAmounts = {};
+      RAW_ITEMS.forEach(rItem => {
+        rawOutAmounts[rItem] = rawCo[rItem] ? rawCo[rItem].out.amount : 0;
+      });
+
+      // Step 2: 생산수량 수집
+      const prodQty = {};
+      PROC_ITEMS.forEach(item => {
+        const wl = ((STATE.procWorklog[co]||{})[month]||{})[item];
+        prodQty[item] = wl ? wl.production : 0;
+      });
+
+      // Step 3: 원육별 표준무게합계 계산
+      const rawTotalStdWt = {};
+      RAW_ITEMS.forEach(r => { rawTotalStdWt[r] = 0; });
+
+      PROC_ITEMS.forEach(item => {
+        const bom = PROC_BOM[item];
+        if(!bom || prodQty[item] <= 0) return;
+        bom.forEach(b => {
+          rawTotalStdWt[b.raw] = (rawTotalStdWt[b.raw]||0) + prodQty[item] * b.wt;
+        });
+      });
+
+      // Step 4: BOM 비례배분 → 투입원가
+      PROC_ITEMS.forEach(item => {
+        const bom = PROC_BOM[item];
+        let beg;
+        if(pm && STATE.procResult[pm] && STATE.procResult[pm][co]) {
+          const prev = STATE.procResult[pm][co][item];
+          beg = prev ? {...prev.end} : {qty:0,price:0,amount:0};
+        } else {
+          beg = (STATE.initProc[co]||{})[item] || {qty:0,price:0,amount:0};
+          beg = {...beg};
+        }
+
+        const pQty = prodQty[item];
+        let incAmt = 0;
+
+        if(bom && pQty > 0) {
+          bom.forEach(b => {
+            const stdWt = pQty * b.wt;
+            const totalWt = rawTotalStdWt[b.raw] || 0;
+            if(totalWt > 0 && rawOutAmounts[b.raw] > 0) {
+              const ratio = stdWt / totalWt;
+              incAmt += ratio * rawOutAmounts[b.raw];
+            }
+          });
+        }
+
+        const wl = ((STATE.procWorklog[co]||{})[month]||{})[item];
+        const outQty = wl ? wl.outgoing : 0;
+
+        result[co][item] = calcInventoryItem(beg, pQty, 0, incAmt, outQty);
+      });
+    });
+
+    // 전사 합산
+    result['전사'] = {};
+    PROC_ITEMS.forEach(item => {
+      let bQ=0,bA=0,iQ=0,iA=0,oQ=0,oA=0;
+      COMPANIES_PROC.forEach(co => {
+        const d = result[co][item];
+        if(!d) return;
+        bQ+=d.beg.qty; bA+=d.beg.amount;
+        iQ+=d.inc.qty; iA+=d.inc.amount;
+        oQ+=d.out.qty; oA+=d.out.amount;
+      });
+      const eQ=bQ+iQ-oQ, eA=(bA+iA)-oA;
+      result['전사'][item] = {
+        beg:{qty:bQ,price:bQ>0?bA/bQ:0,amount:bA},
+        inc:{qty:iQ,price:iQ>0?iA/iQ:0,amount:iA},
+        out:{qty:oQ,price:oQ>0?oA/oQ:0,amount:oA},
+        end:{qty:eQ,price:eQ>0?eA/eQ:0,amount:eA},
+        avgPrice:(bQ+iQ)>0?(bA+iA)/(bQ+iQ):0
+      };
+    });
+
+    STATE.procResult[month] = result;
+  });
+
+  document.getElementById('procResult').innerHTML = '<div class="msg msg-ok">가공육 수불부 계산 완료!</div>';
+  renderProcResult();
+}
+
+function emptyRow() {
+  return {
+    beg:{qty:0,price:0,amount:0}, inc:{qty:0,price:0,amount:0},
+    out:{qty:0,price:0,amount:0}, end:{qty:0,price:0,amount:0}, avgPrice:0
+  };
+}
+
+// ================================================================
+//  소스 수불부 계산 엔진
+// ================================================================
+function calculateSauce() {
+  const months = getMonths();
+  STATE.sauceResult = {};
+
+  months.forEach((month, mi) => {
+    const result = { raw:{}, product:{} };
+    const pm = mi===0 ? null : months[mi-1];
+
+    // 원재료 총평균법
+    SAUCE_RAW.forEach(item => {
+      let beg;
+      if(pm && STATE.sauceResult[pm]) {
+        const prev = STATE.sauceResult[pm].raw[item];
+        beg = prev ? {...prev.end} : {qty:0,price:0,amount:0};
+      } else {
+        beg = (STATE.initSauceRaw||{})[item] || {qty:0,price:0,amount:0};
+        beg = {...beg};
+      }
+      const sr = ((STATE.sauceInput||{})[month]||{})[item] || {incQty:0,incAmt:0,outQty:0};
+      result.raw[item] = calcInventoryItem(beg, sr.incQty, 0, sr.incAmt, sr.outQty);
+    });
+
+    // BOM 비례배분
+    const prodQty = {};
+    SAUCE_PRODUCTS.forEach(p => {
+      prodQty[p] = ((STATE.sauceProdInput||{})[month]||{})[p] || 0;
+    });
+
+    const matTotalStdWt = {};
+    SAUCE_RAW.forEach(m => { matTotalStdWt[m] = 0; });
+    SAUCE_PRODUCTS.forEach(p => {
+      if(prodQty[p] <= 0) return;
+      SAUCE_BOM[p].forEach(b => {
+        matTotalStdWt[b.mat] += prodQty[p] * b.wt;
+      });
+    });
+
+    // 인천공장 제품
+    result.product['인천공장'] = {};
+    SAUCE_PRODUCTS.forEach(prod => {
+      let beg;
+      if(pm && STATE.sauceResult[pm]) {
+        const prev = (STATE.sauceResult[pm].product['인천공장']||{})[prod];
+        beg = prev ? {...prev.end} : {qty:0,price:0,amount:0};
+      } else {
+        beg = ((STATE.initSauceProd||{})['인천공장']||{})[prod] || {qty:0,price:0,amount:0};
+        beg = {...beg};
+      }
+
+      let incAmt = 0;
+      if(prodQty[prod] > 0) {
+        SAUCE_BOM[prod].forEach(b => {
+          const stdWt = prodQty[prod] * b.wt;
+          const totalWt = matTotalStdWt[b.mat] || 0;
+          if(totalWt > 0) {
+            const outAmt = result.raw[b.mat] ? result.raw[b.mat].out.amount : 0;
+            incAmt += (stdWt / totalWt) * outAmt;
+          }
+        });
+      }
+
+      const outQty = ((STATE.sauceProdOutput||{})[month]||{})['인천공장_'+prod] || 0;
+      result.product['인천공장'][prod] = calcInventoryItem(beg, prodQty[prod], 0, incAmt, outQty);
+    });
+
+    STATE.sauceResult[month] = result;
+  });
+
+  document.getElementById('sauceResult').innerHTML = '<div class="msg msg-ok">소스 수불부 계산 완료!</div>';
+  renderSauceResult();
+}
+
+// ================================================================
+//  결과 렌더링
+// ================================================================
+function renderRawResult() {
+  const month = document.getElementById('rawResultMonth').value;
+  const data = STATE.rawResult[month];
+  if(!data) { document.getElementById('rawResult').innerHTML = '<div class="msg msg-warn">해당 월 데이터가 없습니다.</div>'; return; }
+
+  let html = '';
+  const sections = ['전사','컨테이너',...COMPANIES_RAW];
+  sections.forEach(sec => {
+    html += `<h4 style="margin:12px 0 6px;color:var(--main)">${sec}</h4>`;
+    html += '<table><tr><th>품목</th><th colspan="3">기초</th><th colspan="3">입고</th><th colspan="3">출고</th><th colspan="3">기말</th></tr>';
+    html += '<tr><th></th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th></tr>';
+
+    let tBQ=0,tBA=0,tIQ=0,tIA=0,tOQ=0,tOA=0,tEQ=0,tEA=0;
+    RAW_ITEMS.forEach(item => {
+      const d = data[sec]?.[item];
+      if(!d) return;
+      const neg = d.end.qty < 0 ? ' class="neg"' : '';
+      html += `<tr>
+        <td class="label">${item}</td>
+        <td class="num">${fmtDec(d.beg.qty)}</td><td class="num">${fmt(d.beg.price)}</td><td class="num">${fmt(d.beg.amount)}</td>
+        <td class="num">${fmtDec(d.inc.qty)}</td><td class="num">${fmt(d.inc.price)}</td><td class="num">${fmt(d.inc.amount)}</td>
+        <td class="num">${fmtDec(d.out.qty)}</td><td class="num">${fmt(d.out.price)}</td><td class="num">${fmt(d.out.amount)}</td>
+        <td class="num"${neg}>${fmtDec(d.end.qty)}</td><td class="num">${fmt(d.end.price)}</td><td class="num"${neg}>${fmt(d.end.amount)}</td>
+      </tr>`;
+      tBQ+=d.beg.qty;tBA+=d.beg.amount;tIQ+=d.inc.qty;tIA+=d.inc.amount;
+      tOQ+=d.out.qty;tOA+=d.out.amount;tEQ+=d.end.qty;tEA+=d.end.amount;
+    });
+    html += `<tr class="subtotal">
+      <td class="label">합계</td>
+      <td class="num">${fmtDec(tBQ)}</td><td></td><td class="num">${fmt(tBA)}</td>
+      <td class="num">${fmtDec(tIQ)}</td><td></td><td class="num">${fmt(tIA)}</td>
+      <td class="num">${fmtDec(tOQ)}</td><td></td><td class="num">${fmt(tOA)}</td>
+      <td class="num">${fmtDec(tEQ)}</td><td></td><td class="num">${fmt(tEA)}</td>
+    </tr>`;
+    html += '</table>';
+  });
+
+  document.getElementById('rawResult').innerHTML = html;
+}
+
+function renderProcResult() {
+  const month = document.getElementById('procResultMonth').value;
+  const data = STATE.procResult[month];
+  if(!data) { document.getElementById('procResult').innerHTML = '<div class="msg msg-warn">해당 월 데이터가 없습니다.</div>'; return; }
+
+  let html = '';
+  ['전사',...COMPANIES_PROC].forEach(sec => {
+    html += `<h4 style="margin:12px 0 6px;color:var(--main)">${sec}</h4>`;
+    html += '<table><tr><th>품목</th><th colspan="3">기초</th><th colspan="3">입고</th><th colspan="3">출고</th><th colspan="3">기말</th></tr>';
+    html += '<tr><th></th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th></tr>';
+
+    PROC_ITEMS.forEach(item => {
+      const d = data[sec]?.[item];
+      if(!d) return;
+      if(d.beg.qty===0 && d.inc.qty===0 && d.out.qty===0 && d.end.qty===0) return;
+      const neg = d.end.qty < 0 ? ' class="neg"' : '';
+      html += `<tr>
+        <td class="label">${item}</td>
+        <td class="num">${fmtDec(d.beg.qty)}</td><td class="num">${fmt(d.beg.price)}</td><td class="num">${fmt(d.beg.amount)}</td>
+        <td class="num">${fmtDec(d.inc.qty)}</td><td class="num">${fmt(d.inc.price)}</td><td class="num">${fmt(d.inc.amount)}</td>
+        <td class="num">${fmtDec(d.out.qty)}</td><td class="num">${fmt(d.out.price)}</td><td class="num">${fmt(d.out.amount)}</td>
+        <td class="num"${neg}>${fmtDec(d.end.qty)}</td><td class="num">${fmt(d.end.price)}</td><td class="num"${neg}>${fmt(d.end.amount)}</td>
+      </tr>`;
+    });
+    html += '</table>';
+  });
+  document.getElementById('procResult').innerHTML = html;
+}
+
+function renderSauceResult() {
+  const month = document.getElementById('sauceResultMonth').value;
+  const data = STATE.sauceResult[month];
+  if(!data) { document.getElementById('sauceResult').innerHTML = '<div class="msg msg-warn">해당 월 데이터가 없습니다.</div>'; return; }
+
+  let html = '<h4 style="margin:12px 0 6px;color:var(--main)">원재료</h4>';
+  html += '<table><tr><th>품목</th><th colspan="3">기초</th><th colspan="3">입고</th><th colspan="3">출고</th><th colspan="3">기말</th></tr>';
+  html += '<tr><th></th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th></tr>';
+  SAUCE_RAW.forEach(item => {
+    const d = data.raw[item]; if(!d) return;
+    html += `<tr><td class="label">${item}</td>
+      <td class="num">${fmtDec(d.beg.qty)}</td><td class="num">${fmt(d.beg.price)}</td><td class="num">${fmt(d.beg.amount)}</td>
+      <td class="num">${fmtDec(d.inc.qty)}</td><td class="num">${fmt(d.inc.price)}</td><td class="num">${fmt(d.inc.amount)}</td>
+      <td class="num">${fmtDec(d.out.qty)}</td><td class="num">${fmt(d.out.price)}</td><td class="num">${fmt(d.out.amount)}</td>
+      <td class="num">${fmtDec(d.end.qty)}</td><td class="num">${fmt(d.end.price)}</td><td class="num">${fmt(d.end.amount)}</td>
+    </tr>`;
+  });
+  html += '</table>';
+
+  html += '<h4 style="margin:12px 0 6px;color:var(--main)">인천공장 제품</h4>';
+  html += '<table><tr><th>품목</th><th colspan="3">기초</th><th colspan="3">입고</th><th colspan="3">출고</th><th colspan="3">기말</th></tr>';
+  html += '<tr><th></th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th></tr>';
+  SAUCE_PRODUCTS.forEach(item => {
+    const d = (data.product['인천공장']||{})[item]; if(!d) return;
+    html += `<tr><td class="label">${item}</td>
+      <td class="num">${fmtDec(d.beg.qty)}</td><td class="num">${fmt(d.beg.price)}</td><td class="num">${fmt(d.beg.amount)}</td>
+      <td class="num">${fmtDec(d.inc.qty)}</td><td class="num">${fmt(d.inc.price)}</td><td class="num">${fmt(d.inc.amount)}</td>
+      <td class="num">${fmtDec(d.out.qty)}</td><td class="num">${fmt(d.out.price)}</td><td class="num">${fmt(d.out.amount)}</td>
+      <td class="num">${fmtDec(d.end.qty)}</td><td class="num">${fmt(d.end.price)}</td><td class="num">${fmt(d.end.amount)}</td>
+    </tr>`;
+  });
+  html += '</table>';
+  document.getElementById('sauceResult').innerHTML = html;
+}
+
+// ================================================================
+//  수동 입력 모드
+// ================================================================
+function showManualRawInput() {
+  const div = document.getElementById('rawManualInput');
+  div.style.display = div.style.display === 'none' ? 'block' : 'none';
+  renderManualRawTables();
+}
+
+function renderManualRawTables() {
+  const month = document.getElementById('rawManualMonth').value;
+  if(!month) return;
+
+  let html = '<h4>매입 (컨테이너 입고)</h4>';
+  html += '<table><tr><th>품목</th><th>수량(kg)</th><th>금액(원)</th></tr>';
+  RAW_ITEMS.forEach(item => {
+    const d = (STATE.purchase[month]||{})[item] || {qty:0,amount:0};
+    html += `<tr><td class="label">${item}</td>
+      <td><input type="number" step="any" value="${d.qty||''}" onchange="updPurchase('${month}','${item}','qty',this.value)"></td>
+      <td><input type="number" step="any" value="${d.amount||''}" onchange="updPurchase('${month}','${item}','amount',this.value)"></td>
+    </tr>`;
+  });
+  html += '</table>';
+
+  COMPANIES_RAW.forEach(co => {
+    html += `<h4>${co} - 입고/출고 수량</h4>`;
+    html += '<table><tr><th>품목</th><th>입고수량</th><th>출고수량</th></tr>';
+    RAW_ITEMS.forEach(item => {
+      const d = ((STATE.worklog[co]||{})[month]||{})[item] || {incoming:0,outgoing:0};
+      html += `<tr><td class="label">${item}</td>
+        <td><input type="number" step="any" value="${d.incoming||''}" onchange="updWorklog('${co}','${month}','${item}','incoming',this.value)"></td>
+        <td><input type="number" step="any" value="${d.outgoing||''}" onchange="updWorklog('${co}','${month}','${item}','outgoing',this.value)"></td>
+      </tr>`;
+    });
+    html += '</table>';
+  });
+
+  document.getElementById('rawManualTables').innerHTML = html;
+}
+
+function updPurchase(month, item, field, val) {
+  if(!STATE.purchase[month]) STATE.purchase[month] = {};
+  if(!STATE.purchase[month][item]) STATE.purchase[month][item] = {qty:0,amount:0};
+  STATE.purchase[month][item][field] = safe(val);
+}
+
+function updWorklog(co, month, item, field, val) {
+  if(!STATE.worklog[co]) STATE.worklog[co] = {};
+  if(!STATE.worklog[co][month]) STATE.worklog[co][month] = {};
+  if(!STATE.worklog[co][month][item]) STATE.worklog[co][month][item] = {incoming:0,outgoing:0};
+  STATE.worklog[co][month][item][field] = safe(val);
+}
+
+document.getElementById('rawManualMonth').addEventListener('change', renderManualRawTables);
+
+// ================================================================
+//  엑셀 출력
+// ================================================================
+function exportRawMeatExcel() {
+  if(!Object.keys(STATE.rawResult).length) { alert('먼저 계산을 실행해주세요.'); return; }
+  const wb = XLSX.utils.book_new();
+  const months = getMonths();
+
+  months.forEach(month => {
+    const data = STATE.rawResult[month];
+    if(!data) return;
+    const rows = [];
+    const sections = ['전사','컨테이너',...COMPANIES_RAW];
+
+    sections.forEach(sec => {
+      rows.push([sec,'','기초','','','입고','','','출고','','','기말','','']);
+      rows.push(['품목','단위','수량','단가','금액','수량','단가','금액','수량','단가','금액','수량','단가','금액']);
+      RAW_ITEMS.forEach(item => {
+        const d = data[sec]?.[item];
+        if(!d) return;
+        rows.push([item,'kg',d.beg.qty,Math.round(d.beg.price),Math.round(d.beg.amount),
+          d.inc.qty,Math.round(d.inc.price),Math.round(d.inc.amount),
+          d.out.qty,Math.round(d.out.price),Math.round(d.out.amount),
+          d.end.qty,Math.round(d.end.price),Math.round(d.end.amount)]);
+      });
+      rows.push([]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{wch:16},{wch:5},...Array(12).fill({wch:14})];
+    XLSX.utils.book_append_sheet(wb, ws, month);
+  });
+
+  XLSX.writeFile(wb, `원육수불부_${STATE.startMonth}-${STATE.endMonth}.xlsx`);
+}
+
+function exportProcessedExcel() {
+  if(!Object.keys(STATE.procResult).length) { alert('먼저 계산을 실행해주세요.'); return; }
+  const wb = XLSX.utils.book_new();
+  const months = getMonths();
+
+  months.forEach(month => {
+    const data = STATE.procResult[month];
+    if(!data) return;
+    const rows = [];
+    ['전사',...COMPANIES_PROC].forEach(sec => {
+      rows.push([sec,'','기초','','','입고','','','출고','','','기말','','']);
+      rows.push(['품목','단위','수량','단가','금액','수량','단가','금액','수량','단가','금액','수량','단가','금액']);
+      PROC_ITEMS.forEach(item => {
+        const d = data[sec]?.[item];
+        if(!d || (d.beg.qty===0 && d.inc.qty===0 && d.out.qty===0)) return;
+        const unit = item.includes('kg') || item==='양념LA갈비' || item==='마늘갈비' ? 'kg' :
+                     item.includes('pack') || item.includes('[선물]') ? 'pack' :
+                     item==='안창살'?'kg': item==='우설'?'봉': item==='깐양'?'kg': '대';
+        rows.push([item,unit,d.beg.qty,Math.round(d.beg.price),Math.round(d.beg.amount),
+          d.inc.qty,Math.round(d.inc.price),Math.round(d.inc.amount),
+          d.out.qty,Math.round(d.out.price),Math.round(d.out.amount),
+          d.end.qty,Math.round(d.end.price),Math.round(d.end.amount)]);
+      });
+      rows.push([]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{wch:22},{wch:5},...Array(12).fill({wch:14})];
+    XLSX.utils.book_append_sheet(wb, ws, month);
+  });
+
+  XLSX.writeFile(wb, `가공육수불부_${STATE.startMonth}-${STATE.endMonth}.xlsx`);
+}
+
+function exportSauceExcel() {
+  if(!Object.keys(STATE.sauceResult).length) { alert('먼저 계산을 실행해주세요.'); return; }
+  const wb = XLSX.utils.book_new();
+  const months = getMonths();
+
+  months.forEach(month => {
+    const data = STATE.sauceResult[month];
+    if(!data) return;
+    const rows = [];
+    rows.push(['원재료','','기초','','','입고','','','출고','','','기말','','']);
+    rows.push(['품목','단위','수량','단가','금액','수량','단가','금액','수량','단가','금액','수량','단가','금액']);
+    SAUCE_RAW.forEach(item => {
+      const d = data.raw[item]; if(!d) return;
+      rows.push([item,'',d.beg.qty,Math.round(d.beg.price),Math.round(d.beg.amount),
+        d.inc.qty,Math.round(d.inc.price),Math.round(d.inc.amount),
+        d.out.qty,Math.round(d.out.price),Math.round(d.out.amount),
+        d.end.qty,Math.round(d.end.price),Math.round(d.end.amount)]);
+    });
+    rows.push([]);
+    rows.push(['인천공장 제품','','기초','','','입고','','','출고','','','기말','','']);
+    rows.push(['품목','단위','수량','단가','금액','수량','단가','금액','수량','단가','금액','수량','단가','금액']);
+    SAUCE_PRODUCTS.forEach(item => {
+      const d = (data.product['인천공장']||{})[item]; if(!d) return;
+      rows.push([item,'',d.beg.qty,Math.round(d.beg.price),Math.round(d.beg.amount),
+        d.inc.qty,Math.round(d.inc.price),Math.round(d.inc.amount),
+        d.out.qty,Math.round(d.out.price),Math.round(d.out.amount),
+        d.end.qty,Math.round(d.end.price),Math.round(d.end.amount)]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{wch:18},{wch:5},...Array(12).fill({wch:14})];
+    XLSX.utils.book_append_sheet(wb, ws, month);
+  });
+
+  XLSX.writeFile(wb, `소스수불부_${STATE.startMonth}-${STATE.endMonth}.xlsx`);
+}
+
+// ================================================================
+//  파일 파싱 (매입자료)
+// ================================================================
+function parseRawMeatInputs() {
+  const statusDiv = document.getElementById('rawParseStatus');
+  statusDiv.innerHTML = '<div class="msg msg-info">파일 파싱 중...</div>';
+
+  const fileP = document.getElementById('filePurchase').files[0];
+  if(fileP) parsePurchaseFile(fileP);
+
+  const fileCP = document.getElementById('fileWL_CP').files[0];
+  if(fileCP) parseWorklogFile(fileCP, '참프레시');
+
+  const fileYM = document.getElementById('fileWL_YM').files[0];
+  if(fileYM) parseWorklogFile(fileYM, '영미트');
+
+  const fileIC = document.getElementById('fileWL_IC').files[0];
+  if(fileIC) parseWorklogFile(fileIC, '인천공장');
+
+  setTimeout(() => {
+    const parts = [];
+    if(fileP) parts.push('매입자료');
+    if(fileCP) parts.push('참프레시');
+    if(fileYM) parts.push('영미트');
+    if(fileIC) parts.push('인천공장');
+    statusDiv.innerHTML = parts.length
+      ? `<div class="msg msg-ok">파싱 완료: ${parts.join(', ')}</div>`
+      : '<div class="msg msg-warn">파일을 선택해주세요.</div>';
+  }, 1000);
+}
+
+// 품목코드 → 원육 품목명 매핑
+const PURCHASE_ITEM_MAP = {
+  '수입갈비':'갈비', '갈비':'갈비', '8025':'갈비',
+  '돈목살':'돈목살', '8026':'돈목살',
+  '돈뼈':'돼지뼈', '돈뼈':'돼지뼈', '8027':'돼지뼈',
+  '살치':'살치살', '살치살':'살치살', '8028':'살치살',
+  '갈비본살':'진갈비살', '진갈비살':'진갈비살', '8029':'진갈비살',
+  '냉동볼살':'부채살', '부채살':'부채살', '8030':'부채살',
+  '안창살원육':'안창살', '안창살':'안창살', '8031':'안창살',
+  '냉동빽립':'척아이롤', '척아이롤':'척아이롤', '8032':'척아이롤',
+  '우설':'우설', '막내장':'막내장', '양념막내장':'막내장', '8033':'막내장',
+  '깐양':'깐양', '양념깐양':'깐양', '8034':'깐양',
+  '홍두깨':'홍두깨', '돈갈비':'돈갈비',
+};
+
+function parsePurchaseFile(file) {
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const wb = XLSX.read(e.target.result, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(ws, {header:1});
+
+    // 헤더 행 찾기
+    let headerRow = -1;
+    for(let i=0; i<Math.min(10,data.length); i++) {
+      const row = data[i];
+      if(!row) continue;
+      const joined = row.join('').toLowerCase();
+      if(joined.includes('품목') || joined.includes('입고일') || joined.includes('품명')) {
+        headerRow = i; break;
+      }
+    }
+    if(headerRow < 0) headerRow = 0;
+
+    const headers = data[headerRow].map(h => String(h||'').trim());
+    const colMap = {};
+    headers.forEach((h, ci) => {
+      const lh = h.toLowerCase();
+      if(lh.includes('품목코드') || lh==='코드') colMap.code = ci;
+      if(lh.includes('품명') || lh.includes('품목명')) colMap.name = ci;
+      if(lh.includes('입고일') || lh.includes('일자')) colMap.date = ci;
+      if(lh.includes('입고량') || lh.includes('수량')) colMap.qty = ci;
+      if(lh.includes('공급가') || lh.includes('금액')) colMap.amount = ci;
+    });
+
+    STATE.purchase = {};
+    for(let i=headerRow+1; i<data.length; i++) {
+      const row = data[i];
+      if(!row || row.length < 3) continue;
+
+      const rawName = String(row[colMap.name] || row[colMap.code] || '').trim();
+      const code = String(row[colMap.code] || '').trim();
+      const itemName = PURCHASE_ITEM_MAP[rawName] || PURCHASE_ITEM_MAP[code] || null;
+      if(!itemName || !RAW_ITEMS.includes(itemName)) continue;
+
+      let dateVal = row[colMap.date];
+      let month = '';
+      if(typeof dateVal === 'number') {
+        const d = XLSX.SSF.parse_date_code(dateVal);
+        month = String(d.y%100).padStart(2,'0') + String(d.m).padStart(2,'0');
+      } else if(typeof dateVal === 'string') {
+        const m = dateVal.match(/(\d{2,4})[.\-\/](\d{1,2})/);
+        if(m) month = String(parseInt(m[1])%100).padStart(2,'0') + String(parseInt(m[2])).padStart(2,'0');
+      }
+      if(!month) continue;
+
+      const qty = safe(row[colMap.qty]);
+      const amount = safe(row[colMap.amount]);
+
+      if(!STATE.purchase[month]) STATE.purchase[month] = {};
+      if(!STATE.purchase[month][itemName]) STATE.purchase[month][itemName] = {qty:0, amount:0};
+      STATE.purchase[month][itemName].qty += qty;
+      STATE.purchase[month][itemName].amount += amount;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// 작업일지 파서 (원육 섹션)
+const WORKLOG_ITEM_MAP = {
+  '갈비':'갈비','살치살':'살치살','진갈비살':'진갈비살','부채살':'부채살',
+  '돈목살':'돈목살','돼지뼈':'돼지뼈','안창살':'안창살','우설':'우설',
+  '막내장':'막내장','깐양':'깐양','우볼살':'부채살','잡육':null,
+  '홍두깨':'홍두깨','척아이롤':'척아이롤','돈갈비':'돈갈비',
+};
+
+function parseWorklogFile(file, company) {
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const wb = XLSX.read(e.target.result, {type:'array'});
+    if(!STATE.worklog[company]) STATE.worklog[company] = {};
+    if(!STATE.procWorklog[company]) STATE.procWorklog[company] = {};
+
+    wb.SheetNames.forEach(sheetName => {
+      const monthMatch = sheetName.match(/(\d{4})/);
+      if(!monthMatch) return;
+      const month = monthMatch[1];
+
+      const ws = wb.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(ws, {header:1});
+      if(!STATE.worklog[company][month]) STATE.worklog[company][month] = {};
+      if(!STATE.procWorklog[company][month]) STATE.procWorklog[company][month] = {};
+
+      // 작업일지 구조: 품목별로 기초/입고/출고/기말 행이 있고 일자별 컬럼
+      // 원육 섹션과 가공육 섹션을 구분해야 함
+      let section = 'raw'; // raw or proc
+      let currentItem = null;
+      let currentRowType = null;
+
+      for(let r=0; r<data.length; r++) {
+        const row = data[r];
+        if(!row) continue;
+
+        const firstCell = String(row[0]||'').trim();
+        const secondCell = String(row[1]||'').trim();
+
+        // 섹션 구분
+        if(firstCell.includes('가공육') || firstCell.includes('제품')) { section = 'proc'; continue; }
+        if(firstCell.includes('원육') || firstCell.includes('원재료')) { section = 'raw'; continue; }
+
+        // 품목명 감지
+        const mapped = section === 'raw' ? WORKLOG_ITEM_MAP[firstCell] : firstCell;
+        if(mapped !== undefined && firstCell && !['기초','입고','출고','기말','매장','본푸드','샤인','기타','합계'].includes(firstCell)) {
+          currentItem = firstCell;
+        }
+
+        // 행 유형 감지
+        if(['기초','입고','출고','기말','매장','본푸드','샤인','기타'].includes(secondCell)) {
+          currentRowType = secondCell;
+        } else if(['기초','입고','출고','기말','매장','본푸드','샤인','기타'].includes(firstCell)) {
+          currentRowType = firstCell;
+        }
+
+        if(!currentItem || !currentRowType) continue;
+
+        // 일자별 값 합산 (3번째 컬럼부터 = 1일~31일)
+        let sum = 0;
+        for(let c=2; c<Math.min(row.length, 34); c++) {
+          sum += safe(row[c]);
+        }
+
+        if(section === 'raw') {
+          const itemName = WORKLOG_ITEM_MAP[currentItem];
+          if(!itemName) continue;
+          if(!STATE.worklog[company][month][itemName]) {
+            STATE.worklog[company][month][itemName] = {incoming:0, outgoing:0};
+          }
+          if(currentRowType === '입고') STATE.worklog[company][month][itemName].incoming += sum;
+          if(currentRowType === '출고') STATE.worklog[company][month][itemName].outgoing += sum;
+        } else {
+          if(!STATE.procWorklog[company][month][currentItem]) {
+            STATE.procWorklog[company][month][currentItem] = {production:0, outgoing:0};
+          }
+          if(currentRowType === '입고') STATE.procWorklog[company][month][currentItem].production += sum;
+          if(['출고','매장','본푸드','샤인','기타'].includes(currentRowType)) {
+            STATE.procWorklog[company][month][currentItem].outgoing += sum;
+          }
+        }
+      }
+    });
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ================================================================
+//  기초재고 불러오기
+// ================================================================
+function importInitialInventory() {
+  document.getElementById('fileInitInv').click();
+}
+
+document.getElementById('fileInitInv').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if(!file) return;
+  // 25년 수불부 파일에서 12월 기말 데이터를 추출
+  // TODO: 파일 형식에 맞는 파서 구현
+  alert('25년 수불부 파일에서 기초재고를 자동으로 추출하는 기능은 추후 구현 예정입니다.\n수동으로 입력해주세요.');
+});
+
+function clearInitialInventory() {
+  STATE.initRaw = {};
+  STATE.initProc = {};
+  renderInitialTables();
+}
+
+// ================================================================
+//  초기화
+// ================================================================
+initSettings();
+</script>
+</body>
+</html>
