@@ -146,7 +146,27 @@ tr.subtotal td { background:#eef2f9; font-weight:700; }
 <!-- ===================== 소스 탭 ===================== -->
 <div class="panel" id="panel-sauce">
   <div class="card">
-    <h3>소스 수불부</h3>
+    <h3>데이터 입력</h3>
+    <div class="toolbar">
+      <label>작업일지(소스): <input type="file" id="fileWL_Sauce" accept=".xlsx,.xls"></label>
+    </div>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="parseSauceInputs()">파일 파싱</button>
+      <button class="btn btn-outline btn-sm" onclick="showManualSauceInput()">수동 입력 모드</button>
+    </div>
+    <div id="sauceParseStatus"></div>
+  </div>
+
+  <div class="card" id="sauceManualInput" style="display:none">
+    <h3>월별 수동 입력</h3>
+    <div class="toolbar">
+      <label>월 선택: <select id="sauceManualMonth" onchange="renderSauceManualTables()"></select></label>
+    </div>
+    <div id="sauceManualTables"></div>
+  </div>
+
+  <div class="card">
+    <h3>계산 및 결과</h3>
     <div class="toolbar">
       <button class="btn btn-gold" onclick="calculateSauce()">소스 계산</button>
       <button class="btn btn-primary" onclick="exportSauceExcel()">엑셀 다운로드</button>
@@ -309,6 +329,9 @@ let STATE = {
   purchase: {},  // { month: { item: {qty, amount} } }
   worklog: {},   // { company: { month: { item: {incoming, outgoing} } } }
   procWorklog: {}, // { company: { month: { item: {production, outgoing, outByDest} } } }
+  sauceInput: {},     // { month: { item: {incQty, incAmt, outQty} } }
+  sauceProdInput: {}, // { month: { product: qty } }
+  sauceProdOutput: {},// { month: { 'company_product': qty } }
   // 계산 결과
   rawResult: {},  // { month: { section: { item: {beg,inc,out,end} } } }
   procResult: {},
@@ -1354,6 +1377,171 @@ function parseWorklogFile(file, company) {
     });
   };
   reader.readAsArrayBuffer(file);
+}
+
+// ================================================================
+//  소스 작업일지 파서
+// ================================================================
+const SAUCE_WL_RAW_MAP = {
+  '정종(백화수복)':'정종','정종':'정종',
+  '황설탕':'황설탕',
+  '양조간장(701S)':'양조간장(701S)','양조간장':'양조간장(701S)',
+  '후추가루':'후추','후추':'후추',
+  '갈아만든배':'갈아만든배','갈아만든 배':'갈아만든배',
+  '아침에사과주스':'아침에사과','아침에 사과주스':'아침에사과','아침에사과':'아침에사과',
+  '진간장':'진간장',
+  '카라멜':'카라멜',
+  '포도당':'포도당',
+  '프로찜에스':'프로찜에스',
+  '미원':'미원',
+};
+const SAUCE_WL_PROD_MAP = {
+  '돼지갈비양념':'돼지갈비양념',
+  '마늘갈비양념':'마늘갈비양념',
+};
+
+function parseSauceInputs() {
+  const statusDiv = document.getElementById('sauceParseStatus');
+  statusDiv.innerHTML = '<div class="msg msg-info">파일 파싱 중...</div>';
+
+  const fileWL = document.getElementById('fileWL_Sauce').files[0];
+  if(!fileWL) {
+    statusDiv.innerHTML = '<div class="msg msg-warn">작업일지(소스) 파일을 선택해주세요.</div>';
+    return;
+  }
+  parseSauceWorklogFile(fileWL, function(monthCount) {
+    statusDiv.innerHTML = `<div class="msg msg-ok">소스 작업일지 파싱 완료: ${monthCount}개월</div>`;
+  });
+}
+
+function parseSauceWorklogFile(file, callback) {
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const wb = XLSX.read(e.target.result, {type:'array'});
+    let monthCount = 0;
+
+    wb.SheetNames.forEach(sheetName => {
+      const monthMatch = sheetName.match(/^(\d{4})$/);
+      if(!monthMatch) return;
+      const month = monthMatch[1];
+      const mo = parseInt(month.substring(2,4));
+      if(mo < 1 || mo > 12) return;
+
+      const ws = wb.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+
+      if(!STATE.sauceInput[month]) STATE.sauceInput[month] = {};
+      if(!STATE.sauceProdInput[month]) STATE.sauceProdInput[month] = {};
+      if(!STATE.sauceProdOutput[month]) STATE.sauceProdOutput[month] = {};
+
+      let section = null; // 'raw' or 'product'
+      let currentItem = null;
+      const ROW_TYPES = ['기초','입고','출고','기말','매장','본푸드','참프레시','영미트','샤인'];
+
+      for(let r = 0; r < data.length; r++) {
+        const row = data[r];
+        if(!row) continue;
+
+        const col1 = String(row[1]||'').replace(/\s+/g,' ').trim();
+        const col3 = String(row[3]||'').trim();
+
+        if(col1.match(/원재료/) || col1 === '1. 원재료') {
+          section = 'raw'; currentItem = null; continue;
+        }
+        if(col1.match(/제품/) || col1 === '2. 제품') {
+          section = 'product'; currentItem = null; continue;
+        }
+        if(col1 === '품목' || !section) continue;
+
+        if(col1 && !ROW_TYPES.includes(col1)) {
+          const cleanName = col1.replace(/\s+/g,'');
+          if(section === 'raw') {
+            currentItem = SAUCE_WL_RAW_MAP[col1] || SAUCE_WL_RAW_MAP[cleanName] || null;
+          } else {
+            currentItem = SAUCE_WL_PROD_MAP[col1] || SAUCE_WL_PROD_MAP[cleanName] || null;
+          }
+        }
+        if(!currentItem || !ROW_TYPES.includes(col3)) continue;
+
+        const total = safe(row[4]);
+
+        if(section === 'raw') {
+          if(!STATE.sauceInput[month][currentItem])
+            STATE.sauceInput[month][currentItem] = {incQty:0, incAmt:0, outQty:0};
+          if(col3 === '입고') STATE.sauceInput[month][currentItem].incQty = total;
+          if(col3 === '출고') STATE.sauceInput[month][currentItem].outQty = total;
+        } else if(section === 'product') {
+          if(col3 === '입고') STATE.sauceProdInput[month][currentItem] = total;
+          if(col3 === '출고') STATE.sauceProdOutput[month]['인천공장_'+currentItem] = total;
+          // 배분처별 출고
+          if(['참프레시','영미트'].includes(col3)) {
+            STATE.sauceProdOutput[month][col3+'_'+currentItem] = total;
+          }
+        }
+      }
+      monthCount++;
+    });
+    if(callback) callback(monthCount);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function showManualSauceInput() {
+  const div = document.getElementById('sauceManualInput');
+  div.style.display = div.style.display === 'none' ? 'block' : 'none';
+  if(div.style.display === 'block') {
+    const sel = document.getElementById('sauceManualMonth');
+    sel.innerHTML = getMonths().map(m => `<option value="${m}">${m.substring(0,2)}년 ${parseInt(m.substring(2))}월</option>`).join('');
+    renderSauceManualTables();
+  }
+}
+
+function renderSauceManualTables() {
+  const month = document.getElementById('sauceManualMonth').value;
+  if(!month) return;
+  if(!STATE.sauceInput[month]) STATE.sauceInput[month] = {};
+  if(!STATE.sauceProdInput[month]) STATE.sauceProdInput[month] = {};
+  if(!STATE.sauceProdOutput[month]) STATE.sauceProdOutput[month] = {};
+
+  let html = '<h4>원재료 입출고</h4>';
+  html += '<table><tr><th>품목</th><th>입고수량</th><th>입고금액</th><th>출고수량</th></tr>';
+  SAUCE_RAW.forEach(item => {
+    const d = STATE.sauceInput[month][item] || {incQty:0, incAmt:0, outQty:0};
+    html += `<tr><td>${item}</td>`;
+    html += `<td><input type="number" value="${d.incQty||''}" onchange="updSauceRaw('${month}','${item}','incQty',this.value)" style="width:80px"></td>`;
+    html += `<td><input type="number" value="${d.incAmt||''}" onchange="updSauceRaw('${month}','${item}','incAmt',this.value)" style="width:100px"></td>`;
+    html += `<td><input type="number" value="${d.outQty||''}" onchange="updSauceRaw('${month}','${item}','outQty',this.value)" style="width:80px"></td>`;
+    html += '</tr>';
+  });
+  html += '</table>';
+
+  html += '<h4>제품 생산/출고</h4>';
+  html += '<table><tr><th>품목</th><th>생산수량(입고)</th><th>출고수량</th></tr>';
+  SAUCE_PRODUCTS.forEach(prod => {
+    const prodQty = STATE.sauceProdInput[month][prod] || 0;
+    const outQty = STATE.sauceProdOutput[month]['인천공장_'+prod] || 0;
+    html += `<tr><td>${prod}</td>`;
+    html += `<td><input type="number" value="${prodQty||''}" onchange="updSauceProd('${month}','${prod}',this.value)" style="width:80px"></td>`;
+    html += `<td><input type="number" value="${outQty||''}" onchange="updSauceProdOut('${month}','${prod}',this.value)" style="width:80px"></td>`;
+    html += '</tr>';
+  });
+  html += '</table>';
+
+  document.getElementById('sauceManualTables').innerHTML = html;
+}
+
+function updSauceRaw(month, item, field, val) {
+  if(!STATE.sauceInput[month]) STATE.sauceInput[month] = {};
+  if(!STATE.sauceInput[month][item]) STATE.sauceInput[month][item] = {incQty:0, incAmt:0, outQty:0};
+  STATE.sauceInput[month][item][field] = safe(val);
+}
+function updSauceProd(month, prod, val) {
+  if(!STATE.sauceProdInput[month]) STATE.sauceProdInput[month] = {};
+  STATE.sauceProdInput[month][prod] = safe(val);
+}
+function updSauceProdOut(month, prod, val) {
+  if(!STATE.sauceProdOutput[month]) STATE.sauceProdOutput[month] = {};
+  STATE.sauceProdOutput[month]['인천공장_'+prod] = safe(val);
 }
 
 // ================================================================
