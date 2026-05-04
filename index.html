@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>JSY Food 재고수불부 자동생성기</title>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <style>
 :root { --main: #00338D; --gold: #C5A44E; --bg: #f5f6fa; --card: #fff; --border: #dde1e8; --text: #222; --sub: #666; }
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -218,13 +218,93 @@ const SAUCE_BOM = {
 // ================================================================
 //  전역 상태
 // ================================================================
+// 25년 12월 기말 → 26년 기초재고 (하드코딩)
+const DEFAULT_INIT_RAW = {
+  '참프레시': {
+    '갈비': {qty:1593.29, price:20456.13, amount:32592563},
+    '척아이롤': {qty:363.29, price:16200, amount:5885298},
+    '안창살': {qty:164.1, price:24869.6, amount:4081102},
+    '우설': {qty:9.38, price:80996.44, amount:759747},
+    '막내장': {qty:48, price:20003.27, amount:960157},
+    '깐양': {qty:48, price:10001.09, amount:480052},
+    '부채살': {qty:284.68, price:13708.1, amount:3902424}
+  },
+  '영미트': {
+    '갈비': {qty:3755.46, price:20584.79, amount:77305382},
+    '살치살': {qty:320.9, price:29000, amount:9306100},
+    '안창살': {qty:90.81, price:23931.02, amount:2173176},
+    '우설': {qty:25.96, price:80995.14, amount:2102634},
+    '막내장': {qty:216, price:20000.94, amount:4320205},
+    '깐양': {qty:216, price:10000.31, amount:2160068}
+  },
+  '인천공장': {
+    '갈비': {qty:734.27, price:20523.49, amount:15069790},
+    '막내장': {qty:24, price:20010.84, amount:480260},
+    '깐양': {qty:24, price:10003.61, amount:240087},
+    '부채살': {qty:151.03, price:8011.48, amount:1209975},
+    '돼지뼈': {qty:20, price:2500, amount:50000}
+  }
+};
+const DEFAULT_INIT_PROC = {
+  '참프레시': {
+    '수원왕갈비(15cm)': {qty:775, price:17323.49, amount:13425701},
+    '수원왕갈비(8cm)': {qty:1210, price:8981.44, amount:10867542},
+    '서울왕갈비(8cm,양념)': {qty:4150, price:7318.68, amount:30372515},
+    '생갈비': {qty:56, price:9678.62, amount:542003},
+    '생갈비(15cm)': {qty:978, price:16511.24, amount:16147991},
+    '돼지갈비(동그랑땡)': {qty:150, price:14025.56, amount:2103834},
+    '마늘갈비': {qty:178, price:40803.65, amount:7263050}
+  },
+  '영미트': {
+    '수원왕갈비(15cm)': {qty:815, price:16208.94, amount:13210284},
+    '수원왕갈비(8cm)': {qty:3810, price:9272.31, amount:35327495},
+    '서울왕갈비(8cm,양념)': {qty:1920, price:4521.85, amount:8681952},
+    '생갈비(15cm)': {qty:560, price:15983.06, amount:8950513},
+    '돼지갈비(동그랑땡)': {qty:177, price:13754.94, amount:2434624},
+    '마늘갈비': {qty:290, price:41266.68, amount:11967338}
+  },
+  '인천공장': {
+    '수원왕갈비(15cm)': {qty:1285, price:15325.19, amount:19692875},
+    '수원왕갈비(8cm)': {qty:2600, price:8810.57, amount:22907482},
+    '서울왕갈비(8cm,양념)': {qty:2630, price:6320.32, amount:16622441},
+    '생갈비(15cm)': {qty:892, price:15194.61, amount:13553591},
+    '돼지갈비(동그랑땡)': {qty:203, price:14025.56, amount:2847189},
+    '마늘갈비': {qty:250, price:38339.03, amount:9584757},
+    '청기와양념구이': {qty:1060, price:4613.73, amount:4890552}
+  }
+};
+const DEFAULT_INIT_SAUCE_RAW = {
+  '정종': {qty:29.1, price:11321.46, amount:329454},
+  '황설탕': {qty:11, price:27363.69, amount:301001},
+  '양조간장(701S)': {qty:18, price:62727.3, amount:1129091},
+  '후추': {qty:50, price:5200, amount:260000},
+  '갈아만든배': {qty:12, price:2772.76, amount:33273},
+  '아침에사과': {qty:29, price:2363.65, amount:68546},
+  '진간장': {qty:13, price:22200, amount:288600},
+  '카라멜': {qty:2.3, price:7520.9, amount:17298},
+  '포도당': {qty:59, price:2727.28, amount:160910},
+  '프로찜에스': {qty:23, price:11727.33, amount:269729},
+  '미원': {qty:0.5, price:175000, amount:87500}
+};
+const DEFAULT_INIT_SAUCE_PROD = {
+  '인천공장': {
+    '돼지갈비양념': {qty:6, price:11800.25, amount:70802},
+    '마늘갈비양념': {qty:46, price:18033.86, amount:829558}
+  },
+  '참프레시': {
+    '마늘갈비양념': {qty:9, price:18033.86, amount:162305}
+  }
+};
+
+function deepClone(o) { return JSON.parse(JSON.stringify(o)); }
+
 let STATE = {
   startMonth: '2601', endMonth: '2612',
   // 기초재고: { company: { item: {qty, price, amount} } }
-  initRaw: {},   // 원육
-  initProc: {},  // 가공육
-  initSauceRaw: {},  // 소스 원재료
-  initSauceProd: {}, // 소스 제품
+  initRaw: deepClone(DEFAULT_INIT_RAW),
+  initProc: deepClone(DEFAULT_INIT_PROC),
+  initSauceRaw: deepClone(DEFAULT_INIT_SAUCE_RAW),
+  initSauceProd: deepClone(DEFAULT_INIT_SAUCE_PROD),
   // 파싱된 입력 데이터
   purchase: {},  // { month: { item: {qty, amount} } }
   worklog: {},   // { company: { month: { item: {incoming, outgoing} } } }
@@ -312,6 +392,15 @@ function refreshMonthSelects() {
   });
 }
 
+function fmtInit(n) { return n ? Number(n).toLocaleString('ko-KR',{maximumFractionDigits:2}) : ''; }
+function initInput(co,item,field,val,type) {
+  const esc = s => s.replace(/'/g,"\\'");
+  return `<input type="text" value="${fmtInit(val)}" style="text-align:right"
+    onfocus="this.value=this.value.replace(/,/g,'')"
+    onblur="this.value=fmtInit(Number(this.value||0))"
+    onchange="updInitRaw('${esc(co)}','${esc(item)}','${field}',this.value.replace(/,/g,''))">`;
+}
+
 function renderInitialTables() {
   const rawDiv = document.getElementById('initRawTable');
   let html = '<table><tr><th>품목</th><th>업체</th><th>수량</th><th>단가</th><th>금액</th></tr>';
@@ -321,11 +410,11 @@ function renderInitialTables() {
       if(!STATE.initRaw[co][item]) STATE.initRaw[co][item] = {qty:0,price:0,amount:0};
       const d = STATE.initRaw[co][item];
       html += `<tr>
-        <td class="label">${i===0?'':''}<small>${item}</small></td>
+        <td class="label"><small>${item}</small></td>
         <td class="label"><small>${i===0?co:''}</small></td>
-        <td><input type="number" step="any" value="${d.qty||''}" onchange="updInitRaw('${co}','${item}','qty',this.value)"></td>
-        <td><input type="number" step="any" value="${d.price||''}" onchange="updInitRaw('${co}','${item}','price',this.value)"></td>
-        <td><input type="number" step="any" value="${d.amount||''}" onchange="updInitRaw('${co}','${item}','amount',this.value)"></td>
+        <td>${initInput(co,item,'qty',d.qty)}</td>
+        <td>${initInput(co,item,'price',d.price)}</td>
+        <td>${initInput(co,item,'amount',d.amount)}</td>
       </tr>`;
     });
     html += `<tr style="border-top:2px solid var(--main)"><td colspan="5"></td></tr>`;
@@ -335,6 +424,8 @@ function renderInitialTables() {
 }
 
 function updInitRaw(co,item,field,val) {
+  if(!STATE.initRaw[co]) STATE.initRaw[co] = {};
+  if(!STATE.initRaw[co][item]) STATE.initRaw[co][item] = {qty:0,price:0,amount:0};
   STATE.initRaw[co][item][field] = safe(val);
 }
 
@@ -803,105 +894,184 @@ document.getElementById('rawManualMonth').addEventListener('change', renderManua
 // ================================================================
 //  엑셀 출력
 // ================================================================
+// ================================================================
+//  엑셀 스타일 정의
+// ================================================================
+const XS = {
+  border: { top:{style:'thin',color:{rgb:'888888'}}, bottom:{style:'thin',color:{rgb:'888888'}},
+            left:{style:'thin',color:{rgb:'888888'}}, right:{style:'thin',color:{rgb:'888888'}} },
+  secHead: { font:{name:'맑은 고딕',sz:11,bold:true,color:{rgb:'FFFFFF'}},
+    fill:{fgColor:{rgb:'00338D'}}, alignment:{horizontal:'center',vertical:'center'} },
+  colHead: { font:{name:'맑은 고딕',sz:10,bold:true,color:{rgb:'FFFFFF'}},
+    fill:{fgColor:{rgb:'00338D'}}, alignment:{horizontal:'center',vertical:'center'} },
+  sumHead: { font:{name:'맑은 고딕',sz:10,bold:true}, fill:{fgColor:{rgb:'E8EBF0'}},
+    alignment:{horizontal:'center',vertical:'center'} },
+  item: { font:{name:'맑은 고딕',sz:10,bold:true}, alignment:{horizontal:'left',vertical:'center'} },
+  unit: { font:{name:'맑은 고딕',sz:10}, alignment:{horizontal:'center',vertical:'center'} },
+  qty: { font:{name:'맑은 고딕',sz:10}, alignment:{horizontal:'right'}, numFmt:'#,##0.00' },
+  price: { font:{name:'맑은 고딕',sz:10}, alignment:{horizontal:'right'}, numFmt:'#,##0' },
+  amt: { font:{name:'맑은 고딕',sz:10}, alignment:{horizontal:'right'}, numFmt:'#,##0' },
+  sumQty: { font:{name:'맑은 고딕',sz:10,bold:true}, fill:{fgColor:{rgb:'E8EBF0'}},
+    alignment:{horizontal:'right'}, numFmt:'#,##0.00' },
+  sumAmt: { font:{name:'맑은 고딕',sz:10,bold:true}, fill:{fgColor:{rgb:'E8EBF0'}},
+    alignment:{horizontal:'right'}, numFmt:'#,##0' },
+};
+function bs(s) { return {...s, border:XS.border}; }
+
+function xC(ws, r, c, v, s) {
+  const ref = XLSX.utils.encode_cell({r,c});
+  const t = typeof v === 'number' ? 'n' : 's';
+  ws[ref] = {v, t, s: bs(s)};
+}
+function xF(ws, r, c, f, s) {
+  const ref = XLSX.utils.encode_cell({r,c});
+  ws[ref] = {f, t:'n', s: bs(s)};
+}
+function xEmpty(ws, r, c, s) {
+  const ref = XLSX.utils.encode_cell({r,c});
+  ws[ref] = {v:'', t:'s', s: bs(s)};
+}
+function addMerge(ws, r1, c1, r2, c2) {
+  if(!ws['!merges']) ws['!merges'] = [];
+  ws['!merges'].push({s:{r:r1,c:c1}, e:{r:r2,c:c2}});
+}
+function setRange(ws, r, c) {
+  const cur = XLSX.utils.decode_range(ws['!ref']||'A1');
+  if(r > cur.e.r) cur.e.r = r;
+  if(c > cur.e.c) cur.e.c = c;
+  ws['!ref'] = XLSX.utils.encode_range(cur);
+}
+
+function writeSectionHeader(ws, r, name) {
+  xC(ws, r, 0, name, XS.secHead);
+  xEmpty(ws, r, 1, XS.secHead);
+  addMerge(ws, r, 0, r, 1);
+  [['기초',2,4],['입고',5,7],['출고',8,10],['기말',11,13]].forEach(([label,c1,c2]) => {
+    xC(ws, r, c1, label, XS.secHead);
+    for(let c=c1+1;c<=c2;c++) xEmpty(ws, r, c, XS.secHead);
+    addMerge(ws, r, c1, r, c2);
+  });
+}
+
+function writeColHeader(ws, r) {
+  const cols = ['품목','단위','수량','단가','금액','수량','단가','금액','수량','단가','금액','수량','단가','금액'];
+  cols.forEach((h,c) => xC(ws, r, c, h, XS.colHead));
+}
+
+function writeDataRow(ws, r, item, unitStr, d) {
+  const R = r + 1;
+  xC(ws, r, 0, item, bs(XS.item));
+  xC(ws, r, 1, unitStr, bs(XS.unit));
+  xC(ws, r, 2, d.beg.qty, bs(XS.qty));
+  xF(ws, r, 3, `IF(C${R}=0,0,E${R}/C${R})`, bs(XS.price));
+  xC(ws, r, 4, Math.round(d.beg.amount), bs(XS.amt));
+  xC(ws, r, 5, d.inc.qty, bs(XS.qty));
+  xF(ws, r, 6, `IF(F${R}=0,0,H${R}/F${R})`, bs(XS.price));
+  xC(ws, r, 7, Math.round(d.inc.amount), bs(XS.amt));
+  xC(ws, r, 8, d.out.qty, bs(XS.qty));
+  xF(ws, r, 9, `IF(C${R}+F${R}=0,0,(E${R}+H${R})/(C${R}+F${R}))`, bs(XS.price));
+  xF(ws, r, 10, `I${R}*J${R}`, bs(XS.amt));
+  xF(ws, r, 11, `C${R}+F${R}-I${R}`, bs(XS.qty));
+  xF(ws, r, 12, `J${R}`, bs(XS.price));
+  xF(ws, r, 13, `E${R}+H${R}-K${R}`, bs(XS.amt));
+}
+
+function writeSumRow(ws, r, dataRows) {
+  xC(ws, r, 0, '합계', bs(XS.sumHead));
+  xC(ws, r, 1, '', bs(XS.sumHead));
+  const sumCols = [2,4,5,7,8,10,11,13];
+  const fmCols = [3,6,9,12];
+  const R = r+1;
+  sumCols.forEach(c => {
+    const col = XLSX.utils.encode_col(c);
+    const refs = dataRows.map(dr => col+(dr+1)).join(',');
+    const s = (c===2||c===5||c===8||c===11) ? XS.sumQty : XS.sumAmt;
+    xF(ws, r, c, `SUM(${refs})`, bs(s));
+  });
+  xF(ws, r, 3, `IF(C${R}=0,0,E${R}/C${R})`, bs(XS.sumAmt));
+  xF(ws, r, 6, `IF(F${R}=0,0,H${R}/F${R})`, bs(XS.sumAmt));
+  xF(ws, r, 9, `IF(C${R}+F${R}=0,0,(E${R}+H${R})/(C${R}+F${R}))`, bs(XS.sumAmt));
+  xF(ws, r, 12, `IF(L${R}=0,0,N${R}/L${R})`, bs(XS.sumAmt));
+}
+
+function writeInvSection(ws, r0, name, items, data, unitFn) {
+  writeSectionHeader(ws, r0, name);
+  writeColHeader(ws, r0+1);
+  let r = r0 + 2;
+  const dataRows = [];
+  items.forEach(item => {
+    const d = data?.[item];
+    if(!d) return;
+    if(d.beg.qty===0 && d.beg.amount===0 && d.inc.qty===0 && d.out.qty===0 && d.end.qty===0) return;
+    writeDataRow(ws, r, item, unitFn ? unitFn(item) : 'kg', d);
+    dataRows.push(r);
+    r++;
+  });
+  if(dataRows.length > 0) {
+    writeSumRow(ws, r, dataRows);
+    r++;
+  }
+  setRange(ws, r, 13);
+  return r + 1;
+}
+
 function exportRawMeatExcel() {
   if(!Object.keys(STATE.rawResult).length) { alert('먼저 계산을 실행해주세요.'); return; }
   const wb = XLSX.utils.book_new();
-  const months = getMonths();
-
-  months.forEach(month => {
+  getMonths().forEach(month => {
     const data = STATE.rawResult[month];
     if(!data) return;
-    const rows = [];
-    const sections = ['전사','컨테이너',...COMPANIES_RAW];
-
-    sections.forEach(sec => {
-      rows.push([sec,'','기초','','','입고','','','출고','','','기말','','']);
-      rows.push(['품목','단위','수량','단가','금액','수량','단가','금액','수량','단가','금액','수량','단가','금액']);
-      RAW_ITEMS.forEach(item => {
-        const d = data[sec]?.[item];
-        if(!d) return;
-        rows.push([item,'kg',d.beg.qty,Math.round(d.beg.price),Math.round(d.beg.amount),
-          d.inc.qty,Math.round(d.inc.price),Math.round(d.inc.amount),
-          d.out.qty,Math.round(d.out.price),Math.round(d.out.amount),
-          d.end.qty,Math.round(d.end.price),Math.round(d.end.amount)]);
-      });
-      rows.push([]);
+    const ws = {}; ws['!ref'] = 'A1';
+    let r = 0;
+    ['전사','컨테이너',...COMPANIES_RAW].forEach(sec => {
+      r = writeInvSection(ws, r, sec, RAW_ITEMS, data[sec], ()=>'kg');
     });
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{wch:16},{wch:5},...Array(12).fill({wch:14})];
+    ws['!cols'] = [{wch:14},{wch:5},...Array(12).fill({wch:15})];
     XLSX.utils.book_append_sheet(wb, ws, month);
   });
-
   XLSX.writeFile(wb, `원육수불부_${STATE.startMonth}-${STATE.endMonth}.xlsx`);
 }
 
 function exportProcessedExcel() {
   if(!Object.keys(STATE.procResult).length) { alert('먼저 계산을 실행해주세요.'); return; }
+  const procUnit = item => {
+    if(item==='양념LA갈비'||item==='마늘갈비'||item==='안창살'||item==='깐양'||item==='육회/홍두깨') return 'kg';
+    if(item==='우설') return '봉';
+    return '대';
+  };
   const wb = XLSX.utils.book_new();
-  const months = getMonths();
-
-  months.forEach(month => {
+  getMonths().forEach(month => {
     const data = STATE.procResult[month];
     if(!data) return;
-    const rows = [];
+    const ws = {}; ws['!ref'] = 'A1';
+    let r = 0;
     ['전사',...COMPANIES_PROC].forEach(sec => {
-      rows.push([sec,'','기초','','','입고','','','출고','','','기말','','']);
-      rows.push(['품목','단위','수량','단가','금액','수량','단가','금액','수량','단가','금액','수량','단가','금액']);
-      PROC_ITEMS.forEach(item => {
-        const d = data[sec]?.[item];
-        if(!d || (d.beg.qty===0 && d.inc.qty===0 && d.out.qty===0)) return;
-        const unit = item.includes('kg') || item==='양념LA갈비' || item==='마늘갈비' ? 'kg' :
-                     item.includes('pack') || item.includes('[선물]') ? 'pack' :
-                     item==='안창살'?'kg': item==='우설'?'봉': item==='깐양'?'kg': '대';
-        rows.push([item,unit,d.beg.qty,Math.round(d.beg.price),Math.round(d.beg.amount),
-          d.inc.qty,Math.round(d.inc.price),Math.round(d.inc.amount),
-          d.out.qty,Math.round(d.out.price),Math.round(d.out.amount),
-          d.end.qty,Math.round(d.end.price),Math.round(d.end.amount)]);
-      });
-      rows.push([]);
+      r = writeInvSection(ws, r, sec, PROC_ITEMS, data[sec], procUnit);
     });
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{wch:22},{wch:5},...Array(12).fill({wch:14})];
+    ws['!cols'] = [{wch:22},{wch:5},...Array(12).fill({wch:15})];
     XLSX.utils.book_append_sheet(wb, ws, month);
   });
-
   XLSX.writeFile(wb, `가공육수불부_${STATE.startMonth}-${STATE.endMonth}.xlsx`);
 }
 
 function exportSauceExcel() {
   if(!Object.keys(STATE.sauceResult).length) { alert('먼저 계산을 실행해주세요.'); return; }
   const wb = XLSX.utils.book_new();
-  const months = getMonths();
-
-  months.forEach(month => {
+  getMonths().forEach(month => {
     const data = STATE.sauceResult[month];
     if(!data) return;
-    const rows = [];
-    rows.push(['원재료','','기초','','','입고','','','출고','','','기말','','']);
-    rows.push(['품목','단위','수량','단가','금액','수량','단가','금액','수량','단가','금액','수량','단가','금액']);
-    SAUCE_RAW.forEach(item => {
-      const d = data.raw[item]; if(!d) return;
-      rows.push([item,'',d.beg.qty,Math.round(d.beg.price),Math.round(d.beg.amount),
-        d.inc.qty,Math.round(d.inc.price),Math.round(d.inc.amount),
-        d.out.qty,Math.round(d.out.price),Math.round(d.out.amount),
-        d.end.qty,Math.round(d.end.price),Math.round(d.end.amount)]);
-    });
-    rows.push([]);
-    rows.push(['인천공장 제품','','기초','','','입고','','','출고','','','기말','','']);
-    rows.push(['품목','단위','수량','단가','금액','수량','단가','금액','수량','단가','금액','수량','단가','금액']);
-    SAUCE_PRODUCTS.forEach(item => {
-      const d = (data.product['인천공장']||{})[item]; if(!d) return;
-      rows.push([item,'',d.beg.qty,Math.round(d.beg.price),Math.round(d.beg.amount),
-        d.inc.qty,Math.round(d.inc.price),Math.round(d.inc.amount),
-        d.out.qty,Math.round(d.out.price),Math.round(d.out.amount),
-        d.end.qty,Math.round(d.end.price),Math.round(d.end.amount)]);
-    });
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{wch:18},{wch:5},...Array(12).fill({wch:14})];
+    const ws = {}; ws['!ref'] = 'A1';
+    const sauceUnit = item => {
+      const u = {'정종':'1.8L','황설탕':'15kg','양조간장(701S)':'15L','후추':'200g','갈아만든배':'1.5L',
+        '아침에사과':'1.5L','진간장':'13L','카라멜':'2.7kg','포도당':'kg','프로찜에스':'1kg','미원':'25kg',
+        '돼지갈비양념':'20kg','마늘갈비양념':'7kg'};
+      return u[item]||'';
+    };
+    let r = writeInvSection(ws, 0, '원재료', SAUCE_RAW, data.raw, sauceUnit);
+    r = writeInvSection(ws, r, '인천공장 제품', SAUCE_PRODUCTS, data.product['인천공장']||{}, sauceUnit);
+    ws['!cols'] = [{wch:18},{wch:6},...Array(12).fill({wch:15})];
     XLSX.utils.book_append_sheet(wb, ws, month);
   });
-
   XLSX.writeFile(wb, `소스수불부_${STATE.startMonth}-${STATE.endMonth}.xlsx`);
 }
 
@@ -1202,8 +1372,10 @@ document.getElementById('fileInitInv').addEventListener('change', function(e) {
 });
 
 function clearInitialInventory() {
-  STATE.initRaw = {};
-  STATE.initProc = {};
+  STATE.initRaw = deepClone(DEFAULT_INIT_RAW);
+  STATE.initProc = deepClone(DEFAULT_INIT_PROC);
+  STATE.initSauceRaw = deepClone(DEFAULT_INIT_SAUCE_RAW);
+  STATE.initSauceProd = deepClone(DEFAULT_INIT_SAUCE_PROD);
   renderInitialTables();
 }
 
