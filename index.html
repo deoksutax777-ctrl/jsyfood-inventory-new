@@ -912,28 +912,53 @@ function parseRawMeatInputs() {
   const statusDiv = document.getElementById('rawParseStatus');
   statusDiv.innerHTML = '<div class="msg msg-info">파일 파싱 중...</div>';
 
+  const files = [];
   const fileP = document.getElementById('filePurchase').files[0];
-  if(fileP) parsePurchaseFile(fileP);
-
+  if(fileP) files.push({file:fileP, label:'매입자료', fn: () => parsePurchaseFile(fileP)});
   const fileCP = document.getElementById('fileWL_CP').files[0];
-  if(fileCP) parseWorklogFile(fileCP, '참프레시');
-
+  if(fileCP) files.push({file:fileCP, label:'참프레시', fn: () => parseWorklogFile(fileCP, '참프레시')});
   const fileYM = document.getElementById('fileWL_YM').files[0];
-  if(fileYM) parseWorklogFile(fileYM, '영미트');
-
+  if(fileYM) files.push({file:fileYM, label:'영미트', fn: () => parseWorklogFile(fileYM, '영미트')});
   const fileIC = document.getElementById('fileWL_IC').files[0];
-  if(fileIC) parseWorklogFile(fileIC, '인천공장');
+  if(fileIC) files.push({file:fileIC, label:'인천공장', fn: () => parseWorklogFile(fileIC, '인천공장')});
+
+  if(!files.length) {
+    statusDiv.innerHTML = '<div class="msg msg-warn">파일을 선택해주세요.</div>';
+    return;
+  }
+
+  let done = 0;
+  const origRead = FileReader.prototype.readAsArrayBuffer;
+  files.forEach(f => {
+    const origOnload = null;
+    f.fn();
+  });
 
   setTimeout(() => {
-    const parts = [];
-    if(fileP) parts.push('매입자료');
-    if(fileCP) parts.push('참프레시');
-    if(fileYM) parts.push('영미트');
-    if(fileIC) parts.push('인천공장');
-    statusDiv.innerHTML = parts.length
-      ? `<div class="msg msg-ok">파싱 완료: ${parts.join(', ')}</div>`
-      : '<div class="msg msg-warn">파일을 선택해주세요.</div>';
-  }, 1000);
+    const parts = files.map(f => f.label);
+    let detail = '';
+    if(fileP && STATE.purchase) {
+      const months = Object.keys(STATE.purchase).sort();
+      const items = new Set();
+      months.forEach(m => Object.keys(STATE.purchase[m]).forEach(i => items.add(i)));
+      detail += `<br>매입: ${months.length}개월(${months.join(',')}), ${items.size}품목(${[...items].join(',')})`;
+    }
+    ['참프레시','영미트','인천공장'].forEach(co => {
+      if(STATE.worklog[co]) {
+        const months = Object.keys(STATE.worklog[co]).sort();
+        const items = new Set();
+        months.forEach(m => Object.keys(STATE.worklog[co][m]).forEach(i => items.add(i)));
+        if(months.length) detail += `<br>${co} 원육: ${months.length}개월, ${items.size}품목(${[...items].join(',')})`;
+      }
+      if(STATE.procWorklog[co]) {
+        const months = Object.keys(STATE.procWorklog[co]).sort();
+        const items = new Set();
+        months.forEach(m => Object.keys(STATE.procWorklog[co][m]).forEach(i => items.add(i)));
+        if(months.length) detail += `<br>${co} 가공: ${months.length}개월, ${items.size}품목(${[...items].join(',')})`;
+      }
+    });
+    statusDiv.innerHTML = `<div class="msg msg-ok">파싱 완료: ${parts.join(', ')}${detail}</div>`;
+  }, 3000);
 }
 
 // 품목코드 → 원육 품목명 매핑
@@ -973,12 +998,13 @@ function parsePurchaseFile(file) {
     const headers = data[headerRow].map(h => String(h||'').trim());
     const colMap = {};
     headers.forEach((h, ci) => {
-      const lh = h.toLowerCase();
+      const lh = h.toLowerCase().replace(/\s/g,'');
       if(lh.includes('품목코드') || lh==='코드') colMap.code = ci;
       if(lh.includes('품명') || lh.includes('품목명')) colMap.name = ci;
       if(lh.includes('입고일') || lh.includes('일자')) colMap.date = ci;
       if(lh.includes('입고량') || lh.includes('수량')) colMap.qty = ci;
-      if(lh.includes('공급가') || lh.includes('금액')) colMap.amount = ci;
+      if(lh.includes('공급가')) colMap.amount = ci;
+      else if(!colMap.amount && lh.includes('금액')) colMap.amount = ci;
     });
 
     STATE.purchase = {};
@@ -988,17 +1014,27 @@ function parsePurchaseFile(file) {
 
       const rawName = String(row[colMap.name] || row[colMap.code] || '').trim();
       const code = String(row[colMap.code] || '').trim();
+      if(rawName.includes('총') || rawName.includes('합계') || code.includes('총')) continue;
       const itemName = PURCHASE_ITEM_MAP[rawName] || PURCHASE_ITEM_MAP[code] || null;
       if(!itemName || !RAW_ITEMS.includes(itemName)) continue;
 
       let dateVal = row[colMap.date];
       let month = '';
       if(typeof dateVal === 'number') {
-        const d = XLSX.SSF.parse_date_code(dateVal);
-        month = String(d.y%100).padStart(2,'0') + String(d.m).padStart(2,'0');
+        if(dateVal > 10000000) {
+          const ds = String(Math.floor(dateVal));
+          month = ds.substring(2,4) + ds.substring(4,6);
+        } else {
+          const d = XLSX.SSF.parse_date_code(dateVal);
+          month = String(d.y%100).padStart(2,'0') + String(d.m).padStart(2,'0');
+        }
       } else if(typeof dateVal === 'string') {
-        const m = dateVal.match(/(\d{2,4})[.\-\/](\d{1,2})/);
-        if(m) month = String(parseInt(m[1])%100).padStart(2,'0') + String(parseInt(m[2])).padStart(2,'0');
+        const m8 = dateVal.match(/^(\d{4})(\d{2})\d{2}/);
+        if(m8) { month = String(parseInt(m8[1])%100).padStart(2,'0') + m8[2]; }
+        else {
+          const m = dateVal.match(/(\d{2,4})[.\-\/](\d{1,2})/);
+          if(m) month = String(parseInt(m[1])%100).padStart(2,'0') + String(parseInt(m[2])).padStart(2,'0');
+        }
       }
       if(!month) continue;
 
@@ -1014,13 +1050,45 @@ function parsePurchaseFile(file) {
   reader.readAsArrayBuffer(file);
 }
 
-// 작업일지 파서 (원육 섹션)
-const WORKLOG_ITEM_MAP = {
-  '갈비':'갈비','살치살':'살치살','진갈비살':'진갈비살','부채살':'부채살',
-  '돈목살':'돈목살','돼지뼈':'돼지뼈','안창살':'안창살','우설':'우설',
-  '막내장':'막내장','깐양':'깐양','우볼살':'부채살','잡육':null,
-  '홍두깨':'홍두깨','척아이롤':'척아이롤','돈갈비':'돈갈비',
+// 작업일지 파서 — 26년 구조: col1=품목, col2=단위, col3=수불, col4=합계
+const WORKLOG_RAW_MAP = {
+  '갈비':'갈비','소갈비':'갈비',
+  '살치살':'살치살','살치':'살치살',
+  '진갈비살':'진갈비살','갈비본살':'진갈비살',
+  '척아이롤':'척아이롤','냉동빽립':'척아이롤',
+  '안창살':'안창살','우설':'우설',
+  '막내장':'막내장','깐양':'깐양',
+  '부채살':'부채살','냉동볼살':'부채살',
+  '돈목살':'돈목살','돼지뼈':'돼지뼈','돈뼈':'돼지뼈',
+  '홍두깨':'홍두깨','돈갈비':'돈갈비','한돈':'돈갈비',
 };
+
+const WORKLOG_PROC_MAP = {
+  '생갈비':'생갈비','생갈비(15cm)':'생갈비(15cm)',
+  '수원왕갈비(15cm)':'수원왕갈비(15cm)','수원왕갈비(8cm)':'수원왕갈비(8cm)',
+  '서울왕갈비(8cm,양념)':'서울왕갈비(8cm,양념)',
+  '돼지갈비':'돼지갈비',
+  '돼지갈비(동그랑떙)':'돼지갈비(동그랑땡)','돼지갈비(동그랑땡)':'돼지갈비(동그랑땡)',
+  '육회':'육회','마늘갈비':'마늘갈비','양념LA갈비':'양념LA갈비',
+  '청기와양념구이':'청기와양념구이',
+  '양념갈비[선물]':'양념갈비[선물]','서울양념갈비[선물]':'양념갈비[선물]',
+  '소불고기[선물]':'소불고기[선물]','LA갈비[선물]':'LA갈비[선물]',
+  '양념구이[선물]':'양념구이[선물]','홍두깨':'홍두깨',
+  '안창살':'안창살','우설':'우설','깐양':'깐양',
+};
+
+function cleanWorklogName(raw, mapObj) {
+  const lines = raw.split('\n').map(s => s.trim()).filter(Boolean);
+  if(!lines.length) return '';
+  let name = lines[0].replace(/\s+/g,'');
+  if(lines.length > 1) {
+    const line2 = lines[1].replace(/\s+/g,'');
+    const combined = name + line2;
+    if(mapObj[combined]) return combined;
+  }
+  if(mapObj[name]) return name;
+  return name;
+}
 
 function parseWorklogFile(file, company) {
   const reader = new FileReader();
@@ -1030,69 +1098,87 @@ function parseWorklogFile(file, company) {
     if(!STATE.procWorklog[company]) STATE.procWorklog[company] = {};
 
     wb.SheetNames.forEach(sheetName => {
-      const monthMatch = sheetName.match(/(\d{4})/);
+      const monthMatch = sheetName.match(/^(\d{4})$/);
       if(!monthMatch) return;
       const month = monthMatch[1];
+      const mo = parseInt(month.substring(2,4));
+      if(mo < 1 || mo > 12) return;
 
       const ws = wb.Sheets[sheetName];
       const data = XLSX.utils.sheet_to_json(ws, {header:1});
       if(!STATE.worklog[company][month]) STATE.worklog[company][month] = {};
       if(!STATE.procWorklog[company][month]) STATE.procWorklog[company][month] = {};
 
-      // 작업일지 구조: 품목별로 기초/입고/출고/기말 행이 있고 일자별 컬럼
-      // 원육 섹션과 가공육 섹션을 구분해야 함
-      let section = 'raw'; // raw or proc
+      let section = null;
       let currentItem = null;
-      let currentRowType = null;
+      const ROW_TYPES = ['기초','입고','출고','기말','매장','본푸드','샤인','기타'];
 
       for(let r=0; r<data.length; r++) {
         const row = data[r];
         if(!row) continue;
 
-        const firstCell = String(row[0]||'').trim();
-        const secondCell = String(row[1]||'').trim();
+        const col1raw = String(row[1]||'');
+        const col1clean = col1raw.split('\n')[0].replace(/\s+/g,'').trim();
 
-        // 섹션 구분
-        if(firstCell.includes('가공육') || firstCell.includes('제품')) { section = 'proc'; continue; }
-        if(firstCell.includes('원육') || firstCell.includes('원재료')) { section = 'raw'; continue; }
-
-        // 품목명 감지
-        const mapped = section === 'raw' ? WORKLOG_ITEM_MAP[firstCell] : firstCell;
-        if(mapped !== undefined && firstCell && !['기초','입고','출고','기말','매장','본푸드','샤인','기타','합계'].includes(firstCell)) {
-          currentItem = firstCell;
+        if(col1clean.match(/^[0-9]+\.?원육$/) || col1clean === '원육') {
+          section = 'raw'; currentItem = null; continue;
         }
-
-        // 행 유형 감지
-        if(['기초','입고','출고','기말','매장','본푸드','샤인','기타'].includes(secondCell)) {
-          currentRowType = secondCell;
-        } else if(['기초','입고','출고','기말','매장','본푸드','샤인','기타'].includes(firstCell)) {
-          currentRowType = firstCell;
+        if(col1clean.match(/^[0-9]+\.?가공육$/) || col1clean === '가공육') {
+          section = 'proc'; currentItem = null; continue;
         }
-
-        if(!currentItem || !currentRowType) continue;
-
-        // 일자별 값 합산 (3번째 컬럼부터 = 1일~31일)
-        let sum = 0;
-        for(let c=2; c<Math.min(row.length, 34); c++) {
-          sum += safe(row[c]);
+        if(col1clean.match(/^[0-9]+\.?작업비/) || col1clean === '작업비') {
+          section = null; currentItem = null; continue;
         }
+        if(!section || row.length < 4) continue;
+
+        const col3 = String(row[3]||'').trim();
+        if(col1clean.includes('소계') || col1clean.includes('합계') || col1clean === '품목') continue;
+
+        if(col1clean && !ROW_TYPES.includes(col1clean)) {
+          if(section === 'raw') {
+            currentItem = cleanWorklogName(col1raw, WORKLOG_RAW_MAP);
+          } else {
+            currentItem = cleanWorklogName(col1raw, WORKLOG_PROC_MAP);
+          }
+        }
+        if(!currentItem || !ROW_TYPES.includes(col3)) continue;
+
+        const total = safe(row[4]);
 
         if(section === 'raw') {
-          const itemName = WORKLOG_ITEM_MAP[currentItem];
+          const itemName = WORKLOG_RAW_MAP[currentItem];
           if(!itemName) continue;
-          if(!STATE.worklog[company][month][itemName]) {
+          if(!STATE.worklog[company][month][itemName])
             STATE.worklog[company][month][itemName] = {incoming:0, outgoing:0};
-          }
-          if(currentRowType === '입고') STATE.worklog[company][month][itemName].incoming += sum;
-          if(currentRowType === '출고') STATE.worklog[company][month][itemName].outgoing += sum;
+          if(col3 === '입고') STATE.worklog[company][month][itemName].incoming = total;
+          if(col3 === '출고') STATE.worklog[company][month][itemName].outgoing = total;
         } else {
-          if(!STATE.procWorklog[company][month][currentItem]) {
-            STATE.procWorklog[company][month][currentItem] = {production:0, outgoing:0};
-          }
-          if(currentRowType === '입고') STATE.procWorklog[company][month][currentItem].production += sum;
-          if(['출고','매장','본푸드','샤인','기타'].includes(currentRowType)) {
-            STATE.procWorklog[company][month][currentItem].outgoing += sum;
-          }
+          const itemName = WORKLOG_PROC_MAP[currentItem];
+          if(!itemName) continue;
+          if(!STATE.procWorklog[company][month][itemName])
+            STATE.procWorklog[company][month][itemName] = {production:0, outgoing:0};
+          if(col3 === '입고') STATE.procWorklog[company][month][itemName].production = total;
+          if(col3 === '출고') STATE.procWorklog[company][month][itemName].outgoing = total;
+        }
+      }
+
+      // 원육→가공육 소분판매 pass-through (안창살/우설: 원육출고 = 가공육 입출고)
+      const rawD = STATE.worklog[company][month];
+      const procD = STATE.procWorklog[company][month];
+      ['안창살','우설'].forEach(item => {
+        if(rawD[item] && rawD[item].outgoing && !procD[item]?.production) {
+          if(!procD[item]) procD[item] = {production:0, outgoing:0};
+          procD[item].production = rawD[item].outgoing;
+          procD[item].outgoing = rawD[item].outgoing;
+        }
+      });
+      // 깐양: 막내장+깐양 원육출고 합계 = 가공육 깐양 생산
+      if(rawD['막내장']?.outgoing || rawD['깐양']?.outgoing) {
+        const prod = (rawD['막내장']?.outgoing||0) + (rawD['깐양']?.outgoing||0);
+        if(prod > 0 && !procD['깐양']?.production) {
+          if(!procD['깐양']) procD['깐양'] = {production:0, outgoing:0};
+          procD['깐양'].production = prod;
+          procD['깐양'].outgoing = prod;
         }
       }
     });
