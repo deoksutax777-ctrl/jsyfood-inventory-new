@@ -235,6 +235,32 @@ const SAUCE_BOM = {
   ]
 };
 
+const SHINE_ITEMS = ['양념갈비[선물]','소불고기[선물]','LA갈비[선물]','양념구이[선물]'];
+
+const GIFT_SET_ITEMS = [
+  '명품갈비세트','프리미엄세트','시그니처세트','스페셜1호세트','양념LA갈비세트',
+  '스페셜2호세트','소불고기세트','양념구이세트','실속갈비2구','실속시그니처2구',
+  '실속스페셜2구','실속양념2구','실속소불고기2구','실속LA갈비세트2구','실속스페셜2호2구'
+];
+
+const GIFT_SET_BOM = {
+  '명품갈비세트': {'양념갈비[선물]':4},
+  '프리미엄세트': {'양념갈비[선물]':2,'LA갈비[선물]':2},
+  '시그니처세트': {'양념갈비[선물]':2,'소불고기[선물]':2},
+  '스페셜1호세트': {'양념갈비[선물]':1,'LA갈비[선물]':1,'소불고기[선물]':2},
+  '양념LA갈비세트': {'LA갈비[선물]':4},
+  '스페셜2호세트': {'LA갈비[선물]':2,'소불고기[선물]':2},
+  '소불고기세트': {'소불고기[선물]':4},
+  '양념구이세트': {'양념구이[선물]':4},
+  '실속갈비2구': {'양념갈비[선물]':2},
+  '실속시그니처2구': {'양념갈비[선물]':1,'소불고기[선물]':1},
+  '실속스페셜2구': {'양념갈비[선물]':1,'LA갈비[선물]':1},
+  '실속양념2구': {'양념구이[선물]':2},
+  '실속소불고기2구': {'소불고기[선물]':2},
+  '실속LA갈비세트2구': {'LA갈비[선물]':2},
+  '실속스페셜2호2구': {'소불고기[선물]':1,'LA갈비[선물]':1}
+};
+
 // ================================================================
 //  전역 상태
 // ================================================================
@@ -291,6 +317,12 @@ const DEFAULT_INIT_PROC = {
     '돼지갈비(동그랑땡)': {qty:203, price:14025.56, amount:2847189},
     '마늘갈비': {qty:250, price:38339.03, amount:9584757},
     '청기와양념구이': {qty:1060, price:4613.73, amount:4890552}
+  },
+  '샤인스카이': {
+    '양념갈비[선물]': {qty:588, price:13506.16, amount:7941620},
+    '소불고기[선물]': {qty:985, price:3934.16, amount:3875151},
+    'LA갈비[선물]': {qty:6213, price:8626.12, amount:53594106},
+    '양념구이[선물]': {qty:1352, price:10909.98, amount:14750287}
   }
 };
 const DEFAULT_INIT_SAUCE_RAW = {
@@ -313,6 +345,9 @@ const DEFAULT_INIT_SAUCE_PROD = {
   },
   '참프레시': {
     '마늘갈비양념': {qty:9, price:18033.86, amount:162305}
+  },
+  '영미트': {
+    '마늘갈비양념': {qty:26, price:18033.87, amount:468881}
   }
 };
 
@@ -331,6 +366,8 @@ let STATE = {
   procWorklog: {}, // { company: { month: { item: {production, outgoing, outByDest} } } }
   sauceInput: {},     // { month: { item: {incQty, incAmt, outQty} } }
   sauceProdInput: {}, // { month: { product: qty } }
+  shineTransfer: {},  // { company: { month: { item: qty } } }
+  etcTransfer: {},    // { company: { month: { item: qty } } }
   sauceProdOutput: {},// { month: { 'company_product': qty } }
   // 계산 결과
   rawResult: {},  // { month: { section: { item: {beg,inc,out,end} } } }
@@ -667,13 +704,58 @@ function calculateProcessed() {
       result['본푸드'][item] = calcInventoryItem(beg, incQty, 0, incAmt, outQty);
     });
 
-    // 전사 합산 (생산업체 + 본푸드)
-    const ALL_PROC = [...COMPANIES_PROC, '본푸드'];
+    // 샤인스카이(원육): 입고 = 다른 업체의 '샤인' 출고행, 단가 = 출고업체 총평균단가
+    result['샤인스카이'] = {};
+    SHINE_ITEMS.forEach(item => {
+      let beg;
+      if(pm && STATE.procResult[pm] && STATE.procResult[pm]['샤인스카이']) {
+        const prev = STATE.procResult[pm]['샤인스카이'][item];
+        beg = prev ? {...prev.end} : {qty:0,price:0,amount:0};
+      } else {
+        beg = (STATE.initProc['샤인스카이']||{})[item] || {qty:0,price:0,amount:0};
+        beg = {...beg};
+      }
+      let incQty = 0, incAmt = 0;
+      COMPANIES_PROC.forEach(co => {
+        const transfer = ((STATE.shineTransfer[co]||{})[month]||{})[item] || 0;
+        if(transfer && result[co] && result[co][item]) {
+          incQty += transfer;
+          incAmt += transfer * result[co][item].avgPrice;
+        }
+      });
+      const outQty = incQty; // pass-through (선물세트 조립 데이터 확보 시 BOM 기반으로 전환)
+      result['샤인스카이'][item] = calcInventoryItem(beg, incQty, 0, incAmt, outQty);
+    });
+
+    // 샤인스카이(선물세트): 선물세트 조립/출하
+    result['샤인선물세트'] = {};
+    GIFT_SET_ITEMS.forEach(item => {
+      let beg;
+      if(pm && STATE.procResult[pm] && STATE.procResult[pm]['샤인선물세트']) {
+        const prev = STATE.procResult[pm]['샤인선물세트'][item];
+        beg = prev ? {...prev.end} : {qty:0,price:0,amount:0};
+      } else { beg = {qty:0,price:0,amount:0}; }
+      result['샤인선물세트'][item] = calcInventoryItem(beg, 0, 0, 0, 0);
+    });
+
+    // 기타(선물세트)
+    result['기타선물세트'] = {};
+    GIFT_SET_ITEMS.forEach(item => {
+      let beg;
+      if(pm && STATE.procResult[pm] && STATE.procResult[pm]['기타선물세트']) {
+        const prev = STATE.procResult[pm]['기타선물세트'][item];
+        beg = prev ? {...prev.end} : {qty:0,price:0,amount:0};
+      } else { beg = {qty:0,price:0,amount:0}; }
+      result['기타선물세트'][item] = calcInventoryItem(beg, 0, 0, 0, 0);
+    });
+
+    // 전사 합산 (생산업체 + 본푸드 + 샤인스카이)
+    const ALL_PROC = [...COMPANIES_PROC, '본푸드', '샤인스카이'];
     result['전사'] = {};
     PROC_ITEMS.forEach(item => {
       let bQ=0,bA=0,iQ=0,iA=0,oQ=0,oA=0;
       ALL_PROC.forEach(co => {
-        const d = result[co][item];
+        const d = (result[co]||{})[item];
         if(!d) return;
         bQ+=d.beg.qty; bA+=d.beg.amount;
         iQ+=d.inc.qty; iA+=d.inc.amount;
@@ -771,6 +853,26 @@ function calculateSauce() {
       result.product['인천공장'][prod] = calcInventoryItem(beg, prodQty[prod], 0, incAmt, outQty);
     });
 
+    // 참프레시/영미트 제품: 입고 = 인천공장에서 이전받은 수량 × 인천 총평균단가
+    ['참프레시','영미트'].forEach(co => {
+      result.product[co] = {};
+      SAUCE_PRODUCTS.forEach(prod => {
+        let beg;
+        if(pm && STATE.sauceResult[pm]) {
+          const prev = (STATE.sauceResult[pm].product[co]||{})[prod];
+          beg = prev ? {...prev.end} : {qty:0,price:0,amount:0};
+        } else {
+          beg = ((STATE.initSauceProd||{})[co]||{})[prod] || {qty:0,price:0,amount:0};
+          beg = {...beg};
+        }
+        const incQty = ((STATE.sauceProdOutput||{})[month]||{})[co+'_'+prod] || 0;
+        const icPrice = (result.product['인천공장'][prod]||{}).avgPrice || 0;
+        const incAmt = incQty * icPrice;
+        const outQty = incQty; // pass-through (매장 출고 데이터 확보 시 전환)
+        result.product[co][prod] = calcInventoryItem(beg, incQty, 0, incAmt, outQty);
+      });
+    });
+
     STATE.sauceResult[month] = result;
   });
 
@@ -827,13 +929,20 @@ function renderProcResult() {
   if(!data) { document.getElementById('procResult').innerHTML = '<div class="msg msg-warn">해당 월 데이터가 없습니다.</div>'; return; }
 
   let html = '';
-  ['전사',...COMPANIES_PROC,'본푸드'].forEach(sec => {
-    html += `<h4 style="margin:12px 0 6px;color:var(--main)">${sec}</h4>`;
+  const procSections = [
+    {key:'전사', items:PROC_ITEMS}, ...COMPANIES_PROC.map(c=>({key:c, items:PROC_ITEMS})),
+    {key:'본푸드', items:PROC_ITEMS}, {key:'샤인스카이', label:'샤인스카이(원육)', items:SHINE_ITEMS},
+    {key:'샤인선물세트', label:'샤인스카이(선물세트)', items:GIFT_SET_ITEMS},
+    {key:'기타선물세트', label:'기타(선물세트)', items:GIFT_SET_ITEMS}
+  ];
+  procSections.forEach(({key, label, items}) => {
+    const secLabel = label || key;
+    html += `<h4 style="margin:12px 0 6px;color:var(--main)">${secLabel}</h4>`;
     html += '<table><tr><th>품목</th><th colspan="3">기초</th><th colspan="3">입고</th><th colspan="3">출고</th><th colspan="3">기말</th></tr>';
     html += '<tr><th></th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th></tr>';
 
-    PROC_ITEMS.forEach(item => {
-      const d = data[sec]?.[item];
+    items.forEach(item => {
+      const d = data[key]?.[item];
       if(!d) return;
       if(d.beg.qty===0 && d.inc.qty===0 && d.out.qty===0 && d.end.qty===0) return;
       const neg = d.end.qty < 0 ? ' class="neg"' : '';
@@ -869,19 +978,21 @@ function renderSauceResult() {
   });
   html += '</table>';
 
-  html += '<h4 style="margin:12px 0 6px;color:var(--main)">인천공장 제품</h4>';
-  html += '<table><tr><th>품목</th><th colspan="3">기초</th><th colspan="3">입고</th><th colspan="3">출고</th><th colspan="3">기말</th></tr>';
-  html += '<tr><th></th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th></tr>';
-  SAUCE_PRODUCTS.forEach(item => {
-    const d = (data.product['인천공장']||{})[item]; if(!d) return;
-    html += `<tr><td class="label">${item}</td>
-      <td class="num">${fmtDec(d.beg.qty)}</td><td class="num">${fmt(d.beg.price)}</td><td class="num">${fmt(d.beg.amount)}</td>
-      <td class="num">${fmtDec(d.inc.qty)}</td><td class="num">${fmt(d.inc.price)}</td><td class="num">${fmt(d.inc.amount)}</td>
-      <td class="num">${fmtDec(d.out.qty)}</td><td class="num">${fmt(d.out.price)}</td><td class="num">${fmt(d.out.amount)}</td>
-      <td class="num">${fmtDec(d.end.qty)}</td><td class="num">${fmt(d.end.price)}</td><td class="num">${fmt(d.end.amount)}</td>
-    </tr>`;
+  ['인천공장','참프레시','영미트'].forEach(co => {
+    html += `<h4 style="margin:12px 0 6px;color:var(--main)">${co} 제품</h4>`;
+    html += '<table><tr><th>품목</th><th colspan="3">기초</th><th colspan="3">입고</th><th colspan="3">출고</th><th colspan="3">기말</th></tr>';
+    html += '<tr><th></th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th></tr>';
+    SAUCE_PRODUCTS.forEach(item => {
+      const d = (data.product[co]||{})[item]; if(!d) return;
+      html += `<tr><td class="label">${item}</td>
+        <td class="num">${fmtDec(d.beg.qty)}</td><td class="num">${fmt(d.beg.price)}</td><td class="num">${fmt(d.beg.amount)}</td>
+        <td class="num">${fmtDec(d.inc.qty)}</td><td class="num">${fmt(d.inc.price)}</td><td class="num">${fmt(d.inc.amount)}</td>
+        <td class="num">${fmtDec(d.out.qty)}</td><td class="num">${fmt(d.out.price)}</td><td class="num">${fmt(d.out.amount)}</td>
+        <td class="num">${fmtDec(d.end.qty)}</td><td class="num">${fmt(d.end.price)}</td><td class="num">${fmt(d.end.amount)}</td>
+      </tr>`;
+    });
+    html += '</table>';
   });
-  html += '</table>';
   document.getElementById('sauceResult').innerHTML = html;
 }
 
@@ -1093,8 +1204,17 @@ function exportProcessedExcel() {
     if(!data) return;
     const ws = {}; ws['!ref'] = 'A1';
     let r = 0;
-    ['전사',...COMPANIES_PROC,'본푸드'].forEach(sec => {
-      r = writeInvSection(ws, r, sec, PROC_ITEMS, data[sec], procUnit);
+    const giftUnit = () => '세트';
+    const procExportSections = [
+      {key:'전사',label:'전사',items:PROC_ITEMS,unit:procUnit},
+      ...COMPANIES_PROC.map(c=>({key:c,label:c,items:PROC_ITEMS,unit:procUnit})),
+      {key:'본푸드',label:'본푸드',items:PROC_ITEMS,unit:procUnit},
+      {key:'샤인스카이',label:'샤인스카이(원육)',items:SHINE_ITEMS,unit:procUnit},
+      {key:'샤인선물세트',label:'샤인스카이(선물세트)',items:GIFT_SET_ITEMS,unit:giftUnit},
+      {key:'기타선물세트',label:'기타(선물세트)',items:GIFT_SET_ITEMS,unit:giftUnit}
+    ];
+    procExportSections.forEach(({key,label,items,unit}) => {
+      r = writeInvSection(ws, r, label, items, data[key], unit);
     });
     ws['!cols'] = [{wch:22},{wch:5},...Array(12).fill({wch:15})];
     XLSX.utils.book_append_sheet(wb, ws, month);
@@ -1116,7 +1236,9 @@ function exportSauceExcel() {
       return u[item]||'';
     };
     let r = writeInvSection(ws, 0, '원재료', SAUCE_RAW, data.raw, sauceUnit);
-    r = writeInvSection(ws, r, '인천공장 제품', SAUCE_PRODUCTS, data.product['인천공장']||{}, sauceUnit);
+    ['인천공장','참프레시','영미트'].forEach(co => {
+      r = writeInvSection(ws, r, co+' 제품', SAUCE_PRODUCTS, data.product[co]||{}, sauceUnit);
+    });
     ws['!cols'] = [{wch:18},{wch:6},...Array(12).fill({wch:15})];
     XLSX.utils.book_append_sheet(wb, ws, month);
   });
@@ -1316,6 +1438,8 @@ function parseWorklogFile(file, company) {
     if(!STATE.procWorklog[company]) STATE.procWorklog[company] = {};
     if(!STATE.bonpoodTransfer) STATE.bonpoodTransfer = {};
     if(!STATE.bonpoodTransfer[company]) STATE.bonpoodTransfer[company] = {};
+    if(!STATE.shineTransfer[company]) STATE.shineTransfer[company] = {};
+    if(!STATE.etcTransfer[company]) STATE.etcTransfer[company] = {};
 
     wb.SheetNames.forEach(sheetName => {
       const monthMatch = sheetName.match(/^(\d{4})$/);
@@ -1329,6 +1453,8 @@ function parseWorklogFile(file, company) {
       if(!STATE.worklog[company][month]) STATE.worklog[company][month] = {};
       if(!STATE.procWorklog[company][month]) STATE.procWorklog[company][month] = {};
       if(!STATE.bonpoodTransfer[company][month]) STATE.bonpoodTransfer[company][month] = {};
+      if(!STATE.shineTransfer[company][month]) STATE.shineTransfer[company][month] = {};
+      if(!STATE.etcTransfer[company][month]) STATE.etcTransfer[company][month] = {};
 
       let section = null;
       let currentItem = null;
@@ -1386,6 +1512,8 @@ function parseWorklogFile(file, company) {
           if(col3 === '입고') STATE.procWorklog[company][month][itemName].production = total;
           if(col3 === '출고') STATE.procWorklog[company][month][itemName].outgoing = total;
           if(col3 === '본푸드') STATE.bonpoodTransfer[company][month][itemName] = total;
+          if(col3 === '샤인') STATE.shineTransfer[company][month][itemName] = total;
+          if(col3 === '기타') STATE.etcTransfer[company][month][itemName] = total;
         }
       }
 
