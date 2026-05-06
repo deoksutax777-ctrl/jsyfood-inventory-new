@@ -1023,9 +1023,8 @@ function writeInvSection(ws, r0, name, items, data, unitFn) {
   let r = r0 + 2;
   const dataRows = [];
   items.forEach(item => {
-    const d = data?.[item];
-    if(!d) return;
-    if(d.beg.qty===0 && d.beg.amount===0 && d.inc.qty===0 && d.out.qty===0 && d.end.qty===0) return;
+    const zero = {qty:0, amount:0};
+    const d = data?.[item] ?? {beg:zero, inc:zero, out:zero, end:zero};
     writeDataRow(ws, r, item, unitFn ? unitFn(item) : 'kg', d);
     dataRows.push(r);
     r++;
