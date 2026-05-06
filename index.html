@@ -642,11 +642,37 @@ function calculateProcessed() {
       });
     });
 
-    // 전사 합산
+    // 본푸드: 입고 = 다른 업체의 본푸드 출고행, 단가 = 출고업체 총평균단가
+    result['본푸드'] = {};
+    PROC_ITEMS.forEach(item => {
+      let beg;
+      if(pm && STATE.procResult[pm] && STATE.procResult[pm]['본푸드']) {
+        const prev = STATE.procResult[pm]['본푸드'][item];
+        beg = prev ? {...prev.end} : {qty:0,price:0,amount:0};
+      } else {
+        beg = (STATE.initProc['본푸드']||{})[item] || {qty:0,price:0,amount:0};
+        beg = {...beg};
+      }
+
+      let incQty = 0, incAmt = 0;
+      COMPANIES_PROC.forEach(co => {
+        const transfer = ((STATE.bonpoodTransfer[co]||{})[month]||{})[item] || 0;
+        if(transfer && result[co] && result[co][item]) {
+          incQty += transfer;
+          incAmt += transfer * result[co][item].avgPrice;
+        }
+      });
+
+      const outQty = incQty;
+      result['본푸드'][item] = calcInventoryItem(beg, incQty, 0, incAmt, outQty);
+    });
+
+    // 전사 합산 (생산업체 + 본푸드)
+    const ALL_PROC = [...COMPANIES_PROC, '본푸드'];
     result['전사'] = {};
     PROC_ITEMS.forEach(item => {
       let bQ=0,bA=0,iQ=0,iA=0,oQ=0,oA=0;
-      COMPANIES_PROC.forEach(co => {
+      ALL_PROC.forEach(co => {
         const d = result[co][item];
         if(!d) return;
         bQ+=d.beg.qty; bA+=d.beg.amount;
@@ -801,7 +827,7 @@ function renderProcResult() {
   if(!data) { document.getElementById('procResult').innerHTML = '<div class="msg msg-warn">해당 월 데이터가 없습니다.</div>'; return; }
 
   let html = '';
-  ['전사',...COMPANIES_PROC].forEach(sec => {
+  ['전사',...COMPANIES_PROC,'본푸드'].forEach(sec => {
     html += `<h4 style="margin:12px 0 6px;color:var(--main)">${sec}</h4>`;
     html += '<table><tr><th>품목</th><th colspan="3">기초</th><th colspan="3">입고</th><th colspan="3">출고</th><th colspan="3">기말</th></tr>';
     html += '<tr><th></th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th><th>수량</th><th>단가</th><th>금액</th></tr>';
@@ -1067,7 +1093,7 @@ function exportProcessedExcel() {
     if(!data) return;
     const ws = {}; ws['!ref'] = 'A1';
     let r = 0;
-    ['전사',...COMPANIES_PROC].forEach(sec => {
+    ['전사',...COMPANIES_PROC,'본푸드'].forEach(sec => {
       r = writeInvSection(ws, r, sec, PROC_ITEMS, data[sec], procUnit);
     });
     ws['!cols'] = [{wch:22},{wch:5},...Array(12).fill({wch:15})];
@@ -1288,6 +1314,8 @@ function parseWorklogFile(file, company) {
     const wb = XLSX.read(e.target.result, {type:'array'});
     if(!STATE.worklog[company]) STATE.worklog[company] = {};
     if(!STATE.procWorklog[company]) STATE.procWorklog[company] = {};
+    if(!STATE.bonpoodTransfer) STATE.bonpoodTransfer = {};
+    if(!STATE.bonpoodTransfer[company]) STATE.bonpoodTransfer[company] = {};
 
     wb.SheetNames.forEach(sheetName => {
       const monthMatch = sheetName.match(/^(\d{4})$/);
@@ -1300,6 +1328,7 @@ function parseWorklogFile(file, company) {
       const data = XLSX.utils.sheet_to_json(ws, {header:1});
       if(!STATE.worklog[company][month]) STATE.worklog[company][month] = {};
       if(!STATE.procWorklog[company][month]) STATE.procWorklog[company][month] = {};
+      if(!STATE.bonpoodTransfer[company][month]) STATE.bonpoodTransfer[company][month] = {};
 
       let section = null;
       let currentItem = null;
@@ -1356,6 +1385,7 @@ function parseWorklogFile(file, company) {
             STATE.procWorklog[company][month][itemName] = {production:0, outgoing:0};
           if(col3 === '입고') STATE.procWorklog[company][month][itemName].production = total;
           if(col3 === '출고') STATE.procWorklog[company][month][itemName].outgoing = total;
+          if(col3 === '본푸드') STATE.bonpoodTransfer[company][month][itemName] = total;
         }
       }
 
