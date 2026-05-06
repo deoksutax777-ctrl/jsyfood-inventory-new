@@ -369,6 +369,11 @@ let STATE = {
   shineTransfer: {},  // { company: { month: { item: qty } } }
   etcTransfer: {},    // { company: { month: { item: qty } } }
   sauceProdOutput: {},// { month: { 'company_product': qty } }
+  // 매입원본 (엑셀 SUMIFS 연결용)
+  purchaseRawWS: null,
+  purchaseColMap: null,
+  purchaseHeaderRow: 0,
+  purchaseDataLen: 0,
   // 계산 결과
   rawResult: {},  // { month: { section: { item: {beg,inc,out,end} } } }
   procResult: {},
@@ -1177,13 +1182,45 @@ function writeInvSection(ws, r0, name, items, data, unitFn) {
 function exportRawMeatExcel() {
   if(!Object.keys(STATE.rawResult).length) { alert('먼저 계산을 실행해주세요.'); return; }
   const wb = XLSX.utils.book_new();
+
+  // 매입원본 시트 추가
+  if(STATE.purchaseRawWS) {
+    XLSX.utils.book_append_sheet(wb, STATE.purchaseRawWS, '매입원본');
+  }
+
+  // SUMIFS 참조용 컬럼 문자
+  const cm = STATE.purchaseColMap;
+  const hasPurch = !!cm;
+  let pQtyCol, pAmtCol, pItemCol, pMonthCol, pDS, pDE;
+  if(hasPurch) {
+    pQtyCol = XLSX.utils.encode_col(cm.qty);
+    pAmtCol = XLSX.utils.encode_col(cm.amount);
+    pItemCol = XLSX.utils.encode_col(cm.mappedItem);
+    pMonthCol = XLSX.utils.encode_col(cm.mappedMonth);
+    pDS = STATE.purchaseHeaderRow + 2;
+    pDE = STATE.purchaseDataLen;
+  }
+
   getMonths().forEach(month => {
     const data = STATE.rawResult[month];
     if(!data) return;
     const ws = {}; ws['!ref'] = 'A1';
     let r = 0;
     ['전사','컨테이너',...COMPANIES_RAW].forEach(sec => {
+      const secStart = r;
       r = writeInvSection(ws, r, sec, RAW_ITEMS, data[sec], ()=>'kg');
+
+      // 컨테이너: 입고수량/입고금액을 SUMIFS로, 출고수량=입고수량 참조
+      if(sec === '컨테이너' && hasPurch) {
+        RAW_ITEMS.forEach((item, idx) => {
+          const row = secStart + 2 + idx;
+          const R = row + 1;
+          const sumifArgs = `'매입원본'!$${pMonthCol}$${pDS}:$${pMonthCol}$${pDE},"${month}",'매입원본'!$${pItemCol}$${pDS}:$${pItemCol}$${pDE},"${item}"`;
+          xF(ws, row, 5, `SUMIFS('매입원본'!$${pQtyCol}$${pDS}:$${pQtyCol}$${pDE},${sumifArgs})`, bs(XS.qty));
+          xF(ws, row, 7, `SUMIFS('매입원본'!$${pAmtCol}$${pDS}:$${pAmtCol}$${pDE},${sumifArgs})`, bs(XS.amt));
+          xF(ws, row, 8, `F${R}`, bs(XS.qty));
+        });
+      }
     });
     ws['!cols'] = [{wch:14},{wch:5},...Array(12).fill({wch:15})];
     XLSX.utils.book_append_sheet(wb, ws, month);
@@ -1347,6 +1384,15 @@ function parsePurchaseFile(file) {
       else if(!colMap.amount && lh.includes('금액')) colMap.amount = ci;
     });
 
+    // 헬퍼 컬럼 위치 결정 (원본 끝 + 1, +2)
+    const maxCol = Math.max(...Object.values(colMap));
+    const helpItemCol = maxCol + 1;
+    const helpMonthCol = maxCol + 2;
+    const hRef1 = XLSX.utils.encode_cell({r:headerRow, c:helpItemCol});
+    const hRef2 = XLSX.utils.encode_cell({r:headerRow, c:helpMonthCol});
+    ws[hRef1] = {v:'매핑품목', t:'s'};
+    ws[hRef2] = {v:'월코드', t:'s'};
+
     STATE.purchase = {};
     for(let i=headerRow+1; i<data.length; i++) {
       const row = data[i];
@@ -1378,6 +1424,12 @@ function parsePurchaseFile(file) {
       }
       if(!month) continue;
 
+      // 헬퍼 컬럼 기록
+      const r1 = XLSX.utils.encode_cell({r:i, c:helpItemCol});
+      const r2 = XLSX.utils.encode_cell({r:i, c:helpMonthCol});
+      ws[r1] = {v:itemName, t:'s'};
+      ws[r2] = {v:month, t:'s'};
+
       const qty = safe(row[colMap.qty]);
       const amount = safe(row[colMap.amount]);
 
@@ -1386,6 +1438,15 @@ function parsePurchaseFile(file) {
       STATE.purchase[month][itemName].qty += qty;
       STATE.purchase[month][itemName].amount += amount;
     }
+
+    // 원본 WS 범위 확장 후 저장
+    const rng = XLSX.utils.decode_range(ws['!ref']);
+    rng.e.c = Math.max(rng.e.c, helpMonthCol);
+    ws['!ref'] = XLSX.utils.encode_range(rng);
+    STATE.purchaseRawWS = ws;
+    STATE.purchaseColMap = {...colMap, mappedItem:helpItemCol, mappedMonth:helpMonthCol};
+    STATE.purchaseHeaderRow = headerRow;
+    STATE.purchaseDataLen = data.length;
   };
   reader.readAsArrayBuffer(file);
 }
