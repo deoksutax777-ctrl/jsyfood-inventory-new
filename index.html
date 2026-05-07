@@ -1188,7 +1188,22 @@ function exportRawMeatExcel() {
     XLSX.utils.book_append_sheet(wb, STATE.purchaseRawWS, '매입원본');
   }
 
-  // SUMIFS 참조용 컬럼 문자
+  // 작업일지 정규화 시트 생성
+  const wlRows = [['업체','월코드','품목','입고수량','출고수량']];
+  COMPANIES_RAW.forEach(co => {
+    const months = STATE.worklog[co] || {};
+    Object.keys(months).sort().forEach(month => {
+      Object.keys(months[month]).forEach(item => {
+        const d = months[month][item];
+        wlRows.push([co, month, item, d.incoming||0, d.outgoing||0]);
+      });
+    });
+  });
+  const hasWL = wlRows.length > 1;
+  let wlDE = wlRows.length;
+  if(hasWL) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(wlRows), '작업일지');
+
+  // 매입원본 SUMIFS 참조용
   const cm = STATE.purchaseColMap;
   const hasPurch = !!cm;
   let pQtyCol, pAmtCol, pItemCol, pMonthCol, pDS, pDE;
@@ -1212,8 +1227,10 @@ function exportRawMeatExcel() {
       r = writeInvSection(ws, r, sec, RAW_ITEMS, data[sec], ()=>'kg');
     });
 
+    const cS = secStarts['컨테이너'];
+
+    // 컨테이너: 매입원본 SUMIFS
     if(hasPurch) {
-      const cS = secStarts['컨테이너'];
       RAW_ITEMS.forEach((item, idx) => {
         const row = cS + 2 + idx;
         const R = row + 1;
@@ -1222,21 +1239,31 @@ function exportRawMeatExcel() {
         xF(ws, row, 7, `SUMIFS('매입원본'!$${pAmtCol}$${pDS}:$${pAmtCol}$${pDE},${sumifArgs})`, bs(XS.amt));
         xF(ws, row, 8, `F${R}`, bs(XS.qty));
       });
+    }
 
-      COMPANIES_RAW.forEach(co => {
-        RAW_ITEMS.forEach((item, idx) => {
-          const row = secStarts[co] + 2 + idx;
-          const R = row + 1;
-          const contR = cS + 2 + idx + 1;
+    // 각 업체: 작업일지 SUMIFS + 컨테이너 단가 참조
+    COMPANIES_RAW.forEach(co => {
+      RAW_ITEMS.forEach((item, idx) => {
+        const row = secStarts[co] + 2 + idx;
+        const R = row + 1;
+        const contR = cS + 2 + idx + 1;
+        if(hasWL) {
+          const wlCrit = `'작업일지'!$A$2:$A$${wlDE},"${co}",'작업일지'!$B$2:$B$${wlDE},"${month}",'작업일지'!$C$2:$C$${wlDE},"${item}"`;
+          xF(ws, row, 5, `SUMIFS('작업일지'!$D$2:$D$${wlDE},${wlCrit})`, bs(XS.qty));
+          xF(ws, row, 8, `SUMIFS('작업일지'!$E$2:$E$${wlDE},${wlCrit})`, bs(XS.qty));
+        }
+        if(hasPurch) {
           xF(ws, row, 6, `G${contR}`, bs(XS.price));
           xF(ws, row, 7, `F${R}*G${R}`, bs(XS.amt));
-        });
+        }
       });
+    });
 
+    // 전사: 4개사 SUM
+    if(hasPurch || hasWL) {
       const tS = secStarts['전사'];
       RAW_ITEMS.forEach((item, idx) => {
         const row = tS + 2 + idx;
-        const R = row + 1;
         const refs = COMPANIES_RAW.map(co => secStarts[co] + 2 + idx + 1);
         [2,4,5,7,8].forEach(c => {
           const col = XLSX.utils.encode_col(c);
