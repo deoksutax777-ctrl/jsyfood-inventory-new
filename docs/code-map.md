@@ -1,6 +1,6 @@
-# index.html 코드맵 (1,799줄)
+# index.html 코드맵 (1,851줄)
 
-> 최종 업데이트: 2026-05-07 | 단일 파일 SPA (HTML + CSS + JS)
+> 최종 업데이트: 2026-05-07 (2차) | 단일 파일 SPA (HTML + CSS + JS)
 
 ---
 
@@ -9,8 +9,8 @@
 ```
 L1-50     HTML <head> + CSS 스타일
 L52-177   HTML <body> — 4개 탭 UI
-L179-1797 <script> — 전체 JavaScript 로직
-L1796     initSettings() 호출 (앱 시작점)
+L179-1851 <script> — 전체 JavaScript 로직
+L1848     initSettings() 호출 (앱 시작점)
 ```
 
 ---
@@ -203,9 +203,7 @@ L1796     initSettings() 호출 (앱 시작점)
 
 ---
 
-## L. 수동 입력 모드 (L1005-1058, L1712-1768)
-
-### 원육 수동입력
+## L. 수동 입력 — 원육 (L1005-1058)
 
 | 라인 | 함수 | 역할 |
 |------|------|------|
@@ -214,15 +212,7 @@ L1796     initSettings() 호출 (앱 시작점)
 | 1044 | `updPurchase(month,item,field,val)` | STATE.purchase 업데이트 |
 | 1050 | `updWorklog(co,month,item,field,val)` | STATE.worklog 업데이트 |
 
-### 소스 수동입력
-
-| 라인 | 함수 | 역할 |
-|------|------|------|
-| 1712 | `showManualSauceInput()` | 소스 수동입력 패널 토글 |
-| 1722 | `renderSauceManualTables()` | 원재료(incQty/incAmt/outQty) + 제품(생산/출고) 테이블 |
-| 1756 | `updSauceRaw(month,item,field,val)` | STATE.sauceInput 업데이트 |
-| 1761 | `updSauceProd(month,prod,val)` | STATE.sauceProdInput 업데이트 |
-| 1765 | `updSauceProdOut(month,prod,val)` | STATE.sauceProdOutput 업데이트 |
+소스 수동입력은 Q절 참조
 
 ---
 
@@ -249,36 +239,57 @@ L1796     initSettings() 호출 (앱 시작점)
 
 | 라인 | 함수 | 파일명 | 비고 |
 |------|------|--------|------|
-| 1182 | `exportRawMeatExcel()` | 원육수불부_2601-2612.xlsx | **매입원본 시트 추가 + 컨테이너 입고 SUMIFS 수식 연결** |
-| 1231 | `exportProcessedExcel()` | 가공육수불부_2601-2612.xlsx | 본푸드+샤인스카이(원육)+샤인선물세트+기타선물세트 포함 |
-| 1262 | `exportSauceExcel()` | 소스수불부_2601-2612.xlsx | 참프레시/영미트 제품 포함 |
+| 1182 | `exportRawMeatExcel()` | 원육수불부_2601-2612.xlsx | **매입원본 + 작업일지 시트 추가, 전 섹션 수식 연결** |
+| 1283 | `exportProcessedExcel()` | 가공육수불부_2601-2612.xlsx | 본푸드+샤인스카이(원육)+샤인선물세트+기타선물세트 포함 |
+| 1314 | `exportSauceExcel()` | 소스수불부_2601-2612.xlsx | 참프레시/영미트 제품 포함 |
 
-### 매입원본 SUMIFS 연결 (L1186-1228)
+### 원본 시트 + SUMIFS 수식 연결 (L1186-1278)
 
+**매입원본 시트** (L1187):
 ```
-매입원본 시트:
-  원본 데이터 그대로 + 헬퍼 컬럼 2개 (매핑품목, 월코드)
-  parsePurchaseFile()에서 파싱 시 자동 추가
+원본 데이터 그대로 + 헬퍼 컬럼 2개 (매핑품목, 월코드)
+parsePurchaseFile()에서 파싱 시 자동 추가
+→ STATE.purchaseRawWS에 보존
+```
 
-컨테이너 섹션 수식:
-  입고수량(F열) = SUMIFS('매입원본'!수량열, 월코드열=해당월, 매핑품목열=품목명)
-  입고금액(H열) = SUMIFS('매입원본'!금액열, 월코드열=해당월, 매핑품목열=품목명)
-  출고수량(I열) = F행 참조 (입고=출고)
+**작업일지 시트** (L1191):
+```
+엑셀 출력 시점에 STATE.worklog에서 정규화 테이블 동적 생성
+컬럼: 업체 / 월코드 / 품목 / 입고수량 / 출고수량
+COMPANIES_RAW 4개사 × 월별 × 품목별 flat 구조
+```
+
+**섹션별 수식 연결**:
+```
+컨테이너 (L1232):
+  F(입고수량) = SUMIFS('매입원본'!수량, 월코드=월, 매핑품목=품목)
+  H(입고금액) = SUMIFS('매입원본'!금액, 월코드=월, 매핑품목=품목)
+  I(출고수량) = F 참조 (전량출고)
+
+각 업체 (L1244):
+  F(입고수량) = SUMIFS('작업일지'!입고수량, 업체=업체명, 월코드=월, 품목=품목)
+  G(입고단가) = 컨테이너 동일품목 G셀 참조
+  H(입고금액) = F×G 수식
+  I(출고수량) = SUMIFS('작업일지'!출고수량, 업체=업체명, 월코드=월, 품목=품목)
+
+전사 (L1262):
+  C(기초수량), E(기초금액), F(입고수량), H(입고금액), I(출고수량) = SUM(4개사)
+  D,G,J,K,L,M,N = 기존 수식 자동계산
 ```
 
 ---
 
-## N. 파일 파싱 — 매입자료 (L1286-1478)
+## N. 파일 파싱 — 매입자료 (L1338-1530)
 
-### `parseRawMeatInputs()` (L1288)
+### `parseRawMeatInputs()` (L1340)
 
 오케스트레이터: 4개 파일(매입+작업일지3) 순차 파싱, 3초 후 결과 표시
 
-### `PURCHASE_ITEM_MAP` (L1342-1354)
+### `PURCHASE_ITEM_MAP` (L1394-1406)
 
 매입자료 품목코드/명 → 내부 품목명 매핑 (예: '수입갈비'→'갈비', '8025'→'갈비')
 
-### `parsePurchaseFile(file)` (L1356)
+### `parsePurchaseFile(file)` (L1408)
 
 ```
 헤더행 자동탐지 → 품목코드/품명/일자/수량/공급가 열 매핑
@@ -289,20 +300,20 @@ L1796     initSettings() 호출 (앱 시작점)
 
 ---
 
-## O. 파일 파싱 — 작업일지 (L1479-1604)
+## O. 파일 파싱 — 작업일지 (L1531-1676)
 
 ### 매핑 테이블
 
 | 라인 | 상수 | 설명 |
 |------|------|------|
-| 1461-1471 | `WORKLOG_RAW_MAP` | 작업일지 원육 품목명→내부명 (예: '소갈비'→'갈비') |
-| 1473-1478 | `WORKLOG_PROC_MAP` | 작업일지 가공육 품목명→내부명 (예: '돼지갈비(동그랑떙)'→'돼지갈비(동그랑땡)') |
+| 1513-1523 | `WORKLOG_RAW_MAP` | 작업일지 원육 품목명→내부명 (예: '소갈비'→'갈비') |
+| 1525-1530 | `WORKLOG_PROC_MAP` | 작업일지 가공육 품목명→내부명 (예: '돼지갈비(동그랑떙)'→'돼지갈비(동그랑땡)') |
 
-### `cleanWorklogName(raw, mapObj)` (L1481)
+### `cleanWorklogName(raw, mapObj)` (L1533)
 
 줄바꿈·공백 정리, 2줄 합성 시도 (예: "돼지갈비\n(동그랑떙)" → "돼지갈비(동그랑떙)")
 
-### `parseWorklogFile(file, company)` (L1494)
+### `parseWorklogFile(file, company)` (L1546)
 
 ```
 시트별 (4자리 숫자 = 월):
@@ -319,18 +330,18 @@ L1796     initSettings() 호출 (앱 시작점)
 
 ---
 
-## P. 파일 파싱 — 소스 작업일지 (L1606-1710)
+## P. 파일 파싱 — 소스 작업일지 (L1678-1762)
 
 ### 매핑 테이블
 
 | 라인 | 상수 | 설명 |
 |------|------|------|
-| 1609-1621 | `SAUCE_WL_RAW_MAP` | 소스 원재료명 매핑 (예: '정종(백화수복)'→'정종', '후추가루'→'후추') |
-| 1622-1625 | `SAUCE_WL_PROD_MAP` | 소스 제품명 매핑 (2종) |
+| 1681-1693 | `SAUCE_WL_RAW_MAP` | 소스 원재료명 매핑 (예: '정종(백화수복)'→'정종', '후추가루'→'후추') |
+| 1694-1697 | `SAUCE_WL_PROD_MAP` | 소스 제품명 매핑 (2종) |
 
-### `parseSauceInputs()` (L1626) — 오케스트레이터
+### `parseSauceInputs()` (L1678) — 오케스트레이터
 
-### `parseSauceWorklogFile(file, callback)` (L1640)
+### `parseSauceWorklogFile(file, callback)` (L1692)
 
 ```
 시트별 (4자리 숫자 = 월):
@@ -344,17 +355,29 @@ L1796     initSettings() 호출 (앱 시작점)
 
 ---
 
-## Q. 기초재고 불러오기 (L1771-1791)
+## Q. 수동 입력 — 소스 (L1764-1821)
 
-| 라인 | 함수 | 상태 |
+| 라인 | 함수 | 역할 |
 |------|------|------|
-| 1773 | `importInitialInventory()` | 파일선택 다이얼로그 열기 |
-| 1777 | 파일 change 이벤트 | **미구현** — alert로 안내만 |
-| 1785 | `clearInitialInventory()` | 하드코딩 기본값으로 초기화 |
+| 1764 | `showManualSauceInput()` | 소스 수동입력 패널 토글 |
+| 1774 | `renderSauceManualTables()` | 원재료(incQty/incAmt/outQty) + 제품(생산/출고) 테이블 |
+| 1808 | `updSauceRaw(month,item,field,val)` | STATE.sauceInput 업데이트 |
+| 1813 | `updSauceProd(month,prod,val)` | STATE.sauceProdInput 업데이트 |
+| 1817 | `updSauceProdOut(month,prod,val)` | STATE.sauceProdOutput 업데이트 |
 
 ---
 
-## R. 앱 시작점 (L1794-1799)
+## R. 기초재고 불러오기 (L1823-1843)
+
+| 라인 | 함수 | 상태 |
+|------|------|------|
+| 1825 | `importInitialInventory()` | 파일선택 다이얼로그 열기 |
+| 1829 | 파일 change 이벤트 | **미구현** — alert로 안내만 |
+| 1837 | `clearInitialInventory()` | 하드코딩 기본값으로 초기화 |
+
+---
+
+## S. 앱 시작점 (L1846-1851)
 
 `initSettings()` 호출 → 월 드롭다운 생성, 기초재고 테이블 렌더
 
@@ -367,6 +390,8 @@ L1796     initSettings() 호출 (앱 시작점)
 | 커밋 | 변경 내용 |
 |------|----------|
 | `0e6b3fc` | **매입원본 시트 + SUMIFS 수식 연결**: 파싱 시 원본 WS 보존 + 헬퍼 컬럼(매핑품목/월코드), 엑셀 출력 시 매입원본 시트 추가 + 컨테이너 입고를 SUMIFS 수식으로 연결 |
+| `c696910` | **업체/전사 수식 연결 확장**: 각 업체 입고단가→컨테이너 참조, 입고금액→F×G 수식. 전사 기초/입고/출고 수량·금액 → 4개사 SUM 수식 |
+| `b69f18b` | **작업일지 정규화 시트 추가**: STATE.worklog에서 [업체/월코드/품목/입고수량/출고수량] flat 테이블 생성. 각 업체 입고수량(F)·출고수량(I) → 작업일지 시트 SUMIFS 연결 |
 
 ### 2026-05-06
 
