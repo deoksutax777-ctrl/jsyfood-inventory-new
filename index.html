@@ -1288,12 +1288,82 @@ function exportProcessedExcel() {
     return '대';
   };
   const wb = XLSX.utils.book_new();
-  getMonths().forEach(month => {
+  const months = getMonths();
+
+  // ── 원육출고 시트: rawResult에서 [업체,월코드,품목,출고금액] ──
+  const roRows = [['업체','월코드','품목','출고금액']];
+  months.forEach(month => {
+    COMPANIES_PROC.forEach(co => {
+      const rawCo = (STATE.rawResult[month]||{})[co];
+      RAW_ITEMS.forEach(item => {
+        roRows.push([co, month, item, (rawCo && rawCo[item]) ? rawCo[item].out.amount : 0]);
+      });
+    });
+  });
+  const hasRO = roRows.length > 1;
+  const roDE = roRows.length;
+  if(hasRO) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(roRows), '원육출고');
+
+  // ── 가공육작업일지 시트: procWorklog에서 [업체,월코드,품목,생산수량,출고수량] ──
+  const pwlRows = [['업체','월코드','품목','생산수량','출고수량']];
+  COMPANIES_PROC.forEach(co => {
+    const cMonths = STATE.procWorklog[co] || {};
+    Object.keys(cMonths).sort().forEach(month => {
+      Object.keys(cMonths[month]).forEach(item => {
+        const d = cMonths[month][item];
+        pwlRows.push([co, month, item, d.production||0, d.outgoing||0]);
+      });
+    });
+  });
+  const hasPWL = pwlRows.length > 1;
+  const pwlDE = pwlRows.length;
+  if(hasPWL) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(pwlRows), '가공육작업일지');
+
+  // ── BOM배분 시트: 수식 기반 비례배분 ──
+  const bomData = [];
+  months.forEach(month => {
+    COMPANIES_PROC.forEach(co => {
+      PROC_ITEMS.forEach(pItem => {
+        const bom = PROC_BOM[pItem];
+        if(!bom) return;
+        bom.forEach(b => bomData.push([co, month, pItem, b.raw, b.wt]));
+      });
+    });
+  });
+  const hasBOM = bomData.length > 0 && hasRO && hasPWL;
+  const bomDE = bomData.length + 1;
+  if(hasBOM) {
+    const bws = {};
+    bws['!ref'] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:bomDE-1, c:10}});
+    ['업체','월코드','가공품목','원육품목','표준무게','생산수량','사용무게','총사용무게','배분비율','원육출고금액','배분금액'].forEach((h,c) => {
+      bws[XLSX.utils.encode_cell({r:0,c})] = {v:h, t:'s'};
+    });
+    bomData.forEach((row, i) => {
+      const r = i + 1, R = r + 1;
+      bws[XLSX.utils.encode_cell({r,c:0})] = {v:row[0], t:'s'};
+      bws[XLSX.utils.encode_cell({r,c:1})] = {v:row[1], t:'s'};
+      bws[XLSX.utils.encode_cell({r,c:2})] = {v:row[2], t:'s'};
+      bws[XLSX.utils.encode_cell({r,c:3})] = {v:row[3], t:'s'};
+      bws[XLSX.utils.encode_cell({r,c:4})] = {v:row[4], t:'n'};
+      bws[XLSX.utils.encode_cell({r,c:5})] = {f:`SUMIFS('가공육작업일지'!$D$2:$D$${pwlDE},'가공육작업일지'!$A$2:$A$${pwlDE},A${R},'가공육작업일지'!$B$2:$B$${pwlDE},B${R},'가공육작업일지'!$C$2:$C$${pwlDE},C${R})`, t:'n'};
+      bws[XLSX.utils.encode_cell({r,c:6})] = {f:`F${R}*E${R}`, t:'n'};
+      bws[XLSX.utils.encode_cell({r,c:7})] = {f:`SUMIFS($G$2:$G$${bomDE},$A$2:$A$${bomDE},A${R},$B$2:$B$${bomDE},B${R},$D$2:$D$${bomDE},D${R})`, t:'n'};
+      bws[XLSX.utils.encode_cell({r,c:8})] = {f:`IF(H${R}=0,0,G${R}/H${R})`, t:'n'};
+      bws[XLSX.utils.encode_cell({r,c:9})] = {f:`SUMIFS('원육출고'!$D$2:$D$${roDE},'원육출고'!$A$2:$A$${roDE},A${R},'원육출고'!$B$2:$B$${roDE},B${R},'원육출고'!$C$2:$C$${roDE},D${R})`, t:'n'};
+      bws[XLSX.utils.encode_cell({r,c:10})] = {f:`I${R}*J${R}`, t:'n'};
+    });
+    bws['!cols'] = [{wch:10},{wch:8},{wch:22},{wch:10},{wch:10},{wch:10},{wch:12},{wch:12},{wch:10},{wch:14},{wch:14}];
+    XLSX.utils.book_append_sheet(wb, bws, 'BOM배분');
+  }
+
+  // ── 월별 시트 ──
+  const giftUnit = () => '세트';
+  months.forEach(month => {
     const data = STATE.procResult[month];
     if(!data) return;
     const ws = {}; ws['!ref'] = 'A1';
     let r = 0;
-    const giftUnit = () => '세트';
+    const secStarts = {};
     const procExportSections = [
       {key:'전사',label:'전사',items:PROC_ITEMS,unit:procUnit},
       ...COMPANIES_PROC.map(c=>({key:c,label:c,items:PROC_ITEMS,unit:procUnit})),
@@ -1303,8 +1373,45 @@ function exportProcessedExcel() {
       {key:'기타선물세트',label:'기타(선물세트)',items:GIFT_SET_ITEMS,unit:giftUnit}
     ];
     procExportSections.forEach(({key,label,items,unit}) => {
+      secStarts[key] = r;
       r = writeInvSection(ws, r, label, items, data[key], unit);
     });
+
+    // 4개 생산업체: 작업일지 SUMIFS + BOM배분 SUMIFS
+    COMPANIES_PROC.forEach(co => {
+      PROC_ITEMS.forEach((item, idx) => {
+        const row = secStarts[co] + 2 + idx;
+        const R = row + 1;
+        if(hasPWL) {
+          const crit = `'가공육작업일지'!$A$2:$A$${pwlDE},"${co}",'가공육작업일지'!$B$2:$B$${pwlDE},"${month}",'가공육작업일지'!$C$2:$C$${pwlDE},"${item}"`;
+          xF(ws, row, 5, `SUMIFS('가공육작업일지'!$D$2:$D$${pwlDE},${crit})`, bs(XS.qty));
+          xF(ws, row, 8, `SUMIFS('가공육작업일지'!$E$2:$E$${pwlDE},${crit})`, bs(XS.qty));
+        }
+        if(hasBOM) {
+          const crit = `'BOM배분'!$A$2:$A$${bomDE},"${co}",'BOM배분'!$B$2:$B$${bomDE},"${month}",'BOM배분'!$C$2:$C$${bomDE},"${item}"`;
+          xF(ws, row, 7, `SUMIFS('BOM배분'!$K$2:$K$${bomDE},${crit})`, bs(XS.amt));
+        }
+      });
+    });
+
+    // 전사: ALL_PROC SUM (4개사 + 본푸드 + 샤인스카이)
+    if(hasPWL || hasBOM) {
+      const tS = secStarts['전사'];
+      const allKeys = [...COMPANIES_PROC, '본푸드'];
+      PROC_ITEMS.forEach((item, idx) => {
+        const row = tS + 2 + idx;
+        const refs = allKeys.map(co => secStarts[co] + 2 + idx + 1);
+        const shineIdx = SHINE_ITEMS.indexOf(item);
+        if(shineIdx >= 0) refs.push(secStarts['샤인스카이'] + 2 + shineIdx + 1);
+        [2,4,5,7,8].forEach(c => {
+          const col = XLSX.utils.encode_col(c);
+          const sumRefs = refs.map(rr => `${col}${rr}`).join(',');
+          const s = (c===2||c===5||c===8) ? XS.qty : XS.amt;
+          xF(ws, row, c, `SUM(${sumRefs})`, bs(s));
+        });
+      });
+    }
+
     ws['!cols'] = [{wch:22},{wch:5},...Array(12).fill({wch:15})];
     XLSX.utils.book_append_sheet(wb, ws, month);
   });
