@@ -1206,22 +1206,47 @@ function exportRawMeatExcel() {
     if(!data) return;
     const ws = {}; ws['!ref'] = 'A1';
     let r = 0;
+    const secStarts = {};
     ['전사','컨테이너',...COMPANIES_RAW].forEach(sec => {
-      const secStart = r;
+      secStarts[sec] = r;
       r = writeInvSection(ws, r, sec, RAW_ITEMS, data[sec], ()=>'kg');
-
-      // 컨테이너: 입고수량/입고금액을 SUMIFS로, 출고수량=입고수량 참조
-      if(sec === '컨테이너' && hasPurch) {
-        RAW_ITEMS.forEach((item, idx) => {
-          const row = secStart + 2 + idx;
-          const R = row + 1;
-          const sumifArgs = `'매입원본'!$${pMonthCol}$${pDS}:$${pMonthCol}$${pDE},"${month}",'매입원본'!$${pItemCol}$${pDS}:$${pItemCol}$${pDE},"${item}"`;
-          xF(ws, row, 5, `SUMIFS('매입원본'!$${pQtyCol}$${pDS}:$${pQtyCol}$${pDE},${sumifArgs})`, bs(XS.qty));
-          xF(ws, row, 7, `SUMIFS('매입원본'!$${pAmtCol}$${pDS}:$${pAmtCol}$${pDE},${sumifArgs})`, bs(XS.amt));
-          xF(ws, row, 8, `F${R}`, bs(XS.qty));
-        });
-      }
     });
+
+    if(hasPurch) {
+      const cS = secStarts['컨테이너'];
+      RAW_ITEMS.forEach((item, idx) => {
+        const row = cS + 2 + idx;
+        const R = row + 1;
+        const sumifArgs = `'매입원본'!$${pMonthCol}$${pDS}:$${pMonthCol}$${pDE},"${month}",'매입원본'!$${pItemCol}$${pDS}:$${pItemCol}$${pDE},"${item}"`;
+        xF(ws, row, 5, `SUMIFS('매입원본'!$${pQtyCol}$${pDS}:$${pQtyCol}$${pDE},${sumifArgs})`, bs(XS.qty));
+        xF(ws, row, 7, `SUMIFS('매입원본'!$${pAmtCol}$${pDS}:$${pAmtCol}$${pDE},${sumifArgs})`, bs(XS.amt));
+        xF(ws, row, 8, `F${R}`, bs(XS.qty));
+      });
+
+      COMPANIES_RAW.forEach(co => {
+        RAW_ITEMS.forEach((item, idx) => {
+          const row = secStarts[co] + 2 + idx;
+          const R = row + 1;
+          const contR = cS + 2 + idx + 1;
+          xF(ws, row, 6, `G${contR}`, bs(XS.price));
+          xF(ws, row, 7, `F${R}*G${R}`, bs(XS.amt));
+        });
+      });
+
+      const tS = secStarts['전사'];
+      RAW_ITEMS.forEach((item, idx) => {
+        const row = tS + 2 + idx;
+        const R = row + 1;
+        const refs = COMPANIES_RAW.map(co => secStarts[co] + 2 + idx + 1);
+        [2,4,5,7,8].forEach(c => {
+          const col = XLSX.utils.encode_col(c);
+          const sumRefs = refs.map(rr => `${col}${rr}`).join(',');
+          const s = (c===2||c===5||c===8) ? XS.qty : XS.amt;
+          xF(ws, row, c, `SUM(${sumRefs})`, bs(s));
+        });
+      });
+    }
+
     ws['!cols'] = [{wch:14},{wch:5},...Array(12).fill({wch:15})];
     XLSX.utils.book_append_sheet(wb, ws, month);
   });
